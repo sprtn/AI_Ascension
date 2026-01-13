@@ -30,10 +30,9 @@ export function formatNumber(num, decimals = 2) {
   // Find appropriate suffix
   for (const { value, suffix } of suffixes) {
     if (num >= value) {
-      const formatted = (num / value).toFixed(decimals);
-      // Remove trailing zeros
-      const trimmed = parseFloat(formatted).toString();
-      return trimmed + suffix;
+      // Always show 2 decimal places for numbers with suffixes (K, M, B, etc.)
+      const formatted = (num / value).toFixed(2);
+      return formatted + suffix;
     }
   }
   

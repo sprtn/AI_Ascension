@@ -104,7 +104,7 @@ export function Prestige({ gameState, gameActions }) {
               Grants {formatNumber(VERSION_MULTIPLIERS.major)}x multiplier boost
             </div>
             <div className="text-xs text-yellow-400 mt-1">
-              ⚠️ Resets all resources and stage, but keeps upgrades and achievements
+              ⚠️ Resets everything except version multiplier
             </div>
           </div>
           <button
@@ -152,7 +152,7 @@ export function Prestige({ gameState, gameActions }) {
                   Are you sure you want to prestige to v{incrementVersion(currentVersion, true)}?
                   <br />
                   <br />
-                  This will reset all resources and your stage, but you'll keep all upgrades and achievements.
+                  This will reset everything (resources, upgrades, achievements, stage) except your version multiplier.
                   <br />
                   <br />
                   You'll gain a {formatNumber(VERSION_MULTIPLIERS.major)}x permanent multiplier!
@@ -160,6 +160,9 @@ export function Prestige({ gameState, gameActions }) {
               ) : (
                 <>
                   Prestige to v{incrementVersion(currentVersion, false)}?
+                  <br />
+                  <br />
+                  This will reset everything (resources, upgrades, achievements, stage) except your version multiplier.
                   <br />
                   <br />
                   You'll gain a {formatNumber(VERSION_MULTIPLIERS.minor)}x permanent multiplier!

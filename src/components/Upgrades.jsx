@@ -40,6 +40,54 @@ export function Upgrades({ gameState, gameActions }) {
         // Note: In a full implementation, you'd want to refund resources
         // For now, we just decrease the level without refunding
       } else if (newLevel > currentLevel) {
+        // Find the upgrade definition to check for consumption costs
+        let upgradeDef = null;
+        for (const category of Object.values(UPGRADES)) {
+          const found = category.find(u => u.id === upgradeId);
+          if (found) {
+            upgradeDef = found;
+            break;
+          }
+        }
+        
+        // Check and consume GPT Mini, GPT Pro, and Neural Networks
+        if (upgradeDef) {
+          const upgradeLevels = gameState.state.upgradeLevels || {};
+          
+          // Consume GPT Mini
+          if (upgradeDef.costsGptMini) {
+            const gptMiniLevel = upgradeLevels['gpt-mini'] || 0;
+            const required = upgradeDef.costsGptMini;
+            if (gptMiniLevel >= required) {
+              gameActions.purchaseUpgrade('gpt-mini', Math.max(0, gptMiniLevel - required));
+            } else {
+              throw new Error('Not enough GPT Mini');
+            }
+          }
+          
+          // Consume GPT Pro
+          if (upgradeDef.costsGptPro) {
+            const gptProLevel = upgradeLevels['gpt-pro'] || 0;
+            const required = upgradeDef.costsGptPro;
+            if (gptProLevel >= required) {
+              gameActions.purchaseUpgrade('gpt-pro', Math.max(0, gptProLevel - required));
+            } else {
+              throw new Error('Not enough GPT Pro');
+            }
+          }
+          
+          // Consume Neural Networks
+          if (upgradeDef.costsNeuralNetworks) {
+            const neuralNetworksLevel = upgradeLevels['neural-networks'] || 0;
+            const required = upgradeDef.costsNeuralNetworks;
+            if (neuralNetworksLevel >= required) {
+              gameActions.purchaseUpgrade('neural-networks', Math.max(0, neuralNetworksLevel - required));
+            } else {
+              throw new Error('Not enough Neural Networks');
+            }
+          }
+        }
+        
         // Normal purchase - spend resources and upgrade
         // Only spend if there's actually a cost
         if (cost && Object.keys(cost).length > 0) {

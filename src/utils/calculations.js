@@ -81,6 +81,10 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
     satoshis: 0,
   };
   
+  // Separate token generation and consumption for proper multiplier application
+  let tokenGeneration = 0;
+  let tokenConsumption = 0;
+  
   // Get stage multiplier
   const stageMultiplier = STAGES[stage]?.multiplier || 1;
   
@@ -91,10 +95,12 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
   
   const totalMultiplier = stageMultiplier * versionMultiplier;
   
-  // Count GPT Mini models consumed by addictivity upgrades
+  // Count GPT Mini, GPT Pro, and Neural Networks models consumed by addictivity upgrades
   let gptMiniConsumed = 0;
+  let gptProConsumed = 0;
+  let neuralNetworksConsumed = 0;
   
-  // First pass: calculate all generation and count GPT Mini consumption
+  // First pass: calculate all generation and count consumption
   for (const [category, upgrades] of Object.entries(UPGRADES)) {
     for (const upgrade of upgrades) {
       const level = upgradeLevels[upgrade.id] || 0;
@@ -102,7 +108,14 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
       
       // Calculate effect per level
       if (upgrade.effect.tokensPerSec) {
-        generation.tokens += upgrade.effect.tokensPerSec * level * totalMultiplier;
+        // For addictivity upgrades, tokensPerSec is a cost (subtract tokens)
+        // Token cost for addictivity upgrades is fixed - NOT affected by multipliers
+        // For other upgrades, tokensPerSec is a gain (add tokens)
+        if (category === 'addictivity') {
+          tokenConsumption += upgrade.effect.tokensPerSec * level;
+        } else {
+          tokenGeneration += upgrade.effect.tokensPerSec * level;
+        }
       }
       if (upgrade.effect.processingPowerPerSec) {
         generation.processingPower += upgrade.effect.processingPowerPerSec * level * totalMultiplier;
@@ -139,31 +152,66 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
       // Note: Token to SATS conversion is handled separately in useGameLoop.js
       // It drains from actual token balance, not from generation rates
       
-      // Track GPT Mini consumption from addictivity upgrades
+      // Track consumption from addictivity upgrades
       if (upgrade.costsGptMini) {
-        gptMiniConsumed += upgrade.costsGptMini;
+        gptMiniConsumed += upgrade.costsGptMini * level;
+      }
+      if (upgrade.costsGptPro) {
+        gptProConsumed += upgrade.costsGptPro * level;
+      }
+      if (upgrade.costsNeuralNetworks) {
+        neuralNetworksConsumed += upgrade.costsNeuralNetworks * level;
       }
       
-      // Handle multipliers
-      if (upgrade.effect.processingPowerMultiplier) {
-        generation.processingPower *= Math.pow(upgrade.effect.processingPowerMultiplier, level);
-      }
-      if (upgrade.effect.electricityCostMultiplier) {
-        // This affects costs, not generation directly
+      // Handle multipliers (only if upgrade is toggled on, or if not toggleable)
+      const isToggleable = upgrade.isToggleable || upgrade.effect?.tokenToSatsConversion;
+      const isToggledOn = isToggleable 
+        ? (toggledUpgrades[upgrade.id] !== false) // Default to true if not explicitly false
+        : true; // Not toggleable, so always "on"
+      
+      if (isToggledOn) {
+        if (upgrade.effect.processingPowerMultiplier) {
+          generation.processingPower *= Math.pow(upgrade.effect.processingPowerMultiplier, level);
+        }
+        if (upgrade.effect.electricityCostMultiplier) {
+          // This affects costs, not generation directly
+        }
       }
     }
   }
   
   // Reduce token generation based on GPT Mini models consumed by addictivity
+  // Note: GPT Mini, GPT Pro, and Neural Networks don't currently generate tokens,
+  // but we track consumption for consistency and potential future use
   const gptMiniLevel = upgradeLevels['gpt-mini'] || 0;
   if (gptMiniConsumed > 0 && gptMiniLevel > 0) {
     const gptMiniUpgrade = UPGRADES.tokens.find(u => u.id === 'gpt-mini');
     if (gptMiniUpgrade && gptMiniUpgrade.effect.tokensPerSec) {
       const consumed = Math.min(gptMiniConsumed, gptMiniLevel);
-      const lostTokens = gptMiniUpgrade.effect.tokensPerSec * consumed * totalMultiplier;
-      generation.tokens = Math.max(0, generation.tokens - lostTokens);
+      // GPT Mini consumption reduces generation, so subtract from tokenGeneration
+      tokenGeneration = Math.max(0, tokenGeneration - (gptMiniUpgrade.effect.tokensPerSec * consumed));
     }
   }
+  
+  // Store base token generation and consumption separately
+  // Token generation gets multipliers, token consumption from addictivity is FLAT (no multipliers)
+  // Ensure values are numbers, default to 0 if undefined/NaN
+  generation.tokenGeneration = isNaN(tokenGeneration) || !isFinite(tokenGeneration) ? 0 : tokenGeneration;
+  generation.tokenConsumption = isNaN(tokenConsumption) || !isFinite(tokenConsumption) ? 0 : tokenConsumption;
+  
+  // Calculate net tokens with stage/version multipliers applied to generation only
+  // Token consumption from addictivity upgrades is FLAT (not multiplied)
+  // Validate multiplier
+  const safeTotalMultiplier = isNaN(totalMultiplier) || !isFinite(totalMultiplier) ? 1 : totalMultiplier;
+  const netTokens = (generation.tokenGeneration * safeTotalMultiplier) - generation.tokenConsumption;
+  generation.tokens = isNaN(netTokens) || !isFinite(netTokens) ? 0 : netTokens;
+  
+  // Validate all other generation values
+  generation.processingPower = isNaN(generation.processingPower) || !isFinite(generation.processingPower) ? 0 : generation.processingPower;
+  generation.electricity = isNaN(generation.electricity) || !isFinite(generation.electricity) ? 0 : generation.electricity;
+  generation.storage = isNaN(generation.storage) || !isFinite(generation.storage) ? 0 : generation.storage;
+  generation.addictivity = isNaN(generation.addictivity) || !isFinite(generation.addictivity) ? 0 : generation.addictivity;
+  generation.satoshis = isNaN(generation.satoshis) || !isFinite(generation.satoshis) ? 0 : generation.satoshis;
   
   return generation;
 }
@@ -229,9 +277,10 @@ export function calculateProcessingPowerConsumption(upgradeLevels) {
 /**
  * Calculate electricity consumption per second
  * @param {Object} upgradeLevels - Map of upgrade IDs to levels
+ * @param {Object} toggledUpgrades - Map of upgrade IDs to their toggle state (true/false)
  * @returns {number} Electricity consumed per second
  */
-export function calculateElectricityConsumption(upgradeLevels) {
+export function calculateElectricityConsumption(upgradeLevels, toggledUpgrades = {}) {
   let consumption = 0;
   
   // Base consumption from processing upgrades (only if they require electricity)
@@ -250,12 +299,15 @@ export function calculateElectricityConsumption(upgradeLevels) {
     }
   }
   
-  // Overclocking increases consumption of other processing upgrades
+  // Overclocking increases consumption of other processing upgrades (only if toggled on)
   const overclockLevel = upgradeLevels['overclocking'] || 0;
   if (overclockLevel > 0) {
-    const overclockUpgrade = UPGRADES.processingPower.find(u => u.id === 'overclocking');
-    if (overclockUpgrade && overclockUpgrade.effect.electricityCostMultiplier) {
-      consumption *= Math.pow(overclockUpgrade.effect.electricityCostMultiplier, overclockLevel);
+    const isOverclockToggled = toggledUpgrades['overclocking'] !== false; // Default to true
+    if (isOverclockToggled) {
+      const overclockUpgrade = UPGRADES.processingPower.find(u => u.id === 'overclocking');
+      if (overclockUpgrade && overclockUpgrade.effect.electricityCostMultiplier) {
+        consumption *= Math.pow(overclockUpgrade.effect.electricityCostMultiplier, overclockLevel);
+      }
     }
   }
   

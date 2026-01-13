@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ACHIEVEMENTS } from '../utils/constants.js';
-import { compareVersions } from '../utils/formatters.js';
+import { ACHIEVEMENTS, UPGRADES } from '../utils/constants.js';
+import { compareVersions, formatNumber, formatBitcoin, formatStorage, formatElectricity } from '../utils/formatters.js';
 
 export function Achievements({ gameState, gameActions }) {
   const [newAchievement, setNewAchievement] = useState(null);
@@ -94,7 +94,44 @@ export function Achievements({ gameState, gameActions }) {
                 <div className="text-3xl">🏆</div>
                 <div className="flex-1">
                   <div className="font-bold text-neon-cyan">{achievement.name}</div>
-                  <div className="text-sm text-gray-400">{achievement.description}</div>
+                  <div className="text-sm text-gray-400 mb-2">{achievement.description}</div>
+                  {achievement.reward && (
+                    <div className="text-xs text-neon-green font-mono mt-2 pt-2 border-t border-neon-green/30">
+                      <div className="text-neon-green/80 mb-1">Reward:</div>
+                      <div className="space-y-1">
+                        {achievement.reward.tokens && (
+                          <div>+{formatNumber(achievement.reward.tokens)} Tokens</div>
+                        )}
+                        {achievement.reward.satoshis && (
+                          <div>+{formatBitcoin(achievement.reward.satoshis)}</div>
+                        )}
+                        {achievement.reward.processingPower && (
+                          <div>+{formatNumber(achievement.reward.processingPower)} FLOPS</div>
+                        )}
+                        {achievement.reward.electricity && (
+                          <div>+{formatElectricity(achievement.reward.electricity)}</div>
+                        )}
+                        {achievement.reward.storage && (
+                          <div>+{formatStorage(achievement.reward.storage)}</div>
+                        )}
+                        {achievement.reward.addictivity && (
+                          <div>+{formatNumber(achievement.reward.addictivity)} Addictivity</div>
+                        )}
+                        {achievement.reward.upgradeLevels && Object.entries(achievement.reward.upgradeLevels).map(([upgradeId, levels]) => {
+                          // Find upgrade name from UPGRADES
+                          let upgradeName = upgradeId;
+                          for (const category of Object.values(UPGRADES)) {
+                            const upgrade = category.find(u => u.id === upgradeId);
+                            if (upgrade) {
+                              upgradeName = upgrade.name;
+                              break;
+                            }
+                          }
+                          return <div key={upgradeId}>+{levels}x {upgradeName}</div>;
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

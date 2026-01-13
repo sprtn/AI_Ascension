@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { formatNumber, formatBitcoin, formatElectricity } from '../utils/formatters.js';
+import { formatNumber, formatBitcoin, formatElectricity, formatStorage } from '../utils/formatters.js';
 import { calculateUpgradeCost, canAfford, calculateGeneration, calculateProcessingPowerConsumption } from '../utils/calculations.js';
+import { UPGRADES, STAGES, VERSION_MULTIPLIERS } from '../utils/constants.js';
 import { ParticleEffect } from './ParticleEffect.jsx';
 
 export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, onToggle }) {
@@ -41,12 +42,30 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
     }
   }
   
+  // Check GPT Pro requirement
+  if (upgrade.costsGptPro) {
+    const gptProLevel = (resources.upgradeLevels || {})['gpt-pro'] || 0;
+    if (gptProLevel < upgrade.costsGptPro) {
+      affordable = false;
+    }
+  }
+  
+  // Check Neural Networks requirement
+  if (upgrade.costsNeuralNetworks) {
+    const neuralNetworksLevel = (resources.upgradeLevels || {})['neural-networks'] || 0;
+    if (neuralNetworksLevel < upgrade.costsNeuralNetworks) {
+      affordable = false;
+    }
+  }
+  
   const maxLevel = upgrade.maxLevel || Infinity;
   const canBuy = affordable && currentLevel < maxLevel && !disabled;
   
-  // Check if upgrade is toggled (for toggleable upgrades like token conversion)
+  // Check if upgrade is toggled (for toggleable upgrades like token conversion or overclocking)
   const isToggled = upgrade.effect?.tokenToSatsConversion 
     ? (resources.toggledUpgrades?.[upgrade.id] !== false) // Default to true
+    : upgrade.isToggleable
+    ? (resources.toggledUpgrades?.[upgrade.id] !== false) // Default to true for toggleable upgrades
     : false;
   
   const handleClick = (e) => {
@@ -324,10 +343,67 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
               Convert {formatNumber(upgrade.effect.tokenToSatsConversion.tokens)} Token → {formatNumber(upgrade.effect.tokenToSatsConversion.satoshis)} SATS/sec
             </div>
           )}
+          {/* Display production/gains */}
+          {(() => {
+            // Check if this is an addictivity upgrade
+            const isAddictivityUpgrade = UPGRADES.addictivity?.some(u => u.id === upgrade.id);
+            
+            // For addictivity upgrades, exclude tokensPerSec from gains (shown as cost instead)
+            const hasGains = isAddictivityUpgrade
+              ? (upgrade.effect?.processingPowerPerSec || upgrade.effect?.electricityPerSec || upgrade.effect?.satoshisPerSec || upgrade.effect?.addictivityPerSec)
+              : (upgrade.effect?.tokensPerSec || upgrade.effect?.processingPowerPerSec || upgrade.effect?.electricityPerSec || upgrade.effect?.satoshisPerSec || upgrade.effect?.addictivityPerSec);
+            
+            return hasGains ? (
+              <div className="text-xs text-neon-green font-mono mb-3">
+                {!isAddictivityUpgrade && upgrade.effect.tokensPerSec && (
+                  <div>+{formatNumber(upgrade.effect.tokensPerSec)} Tokens/sec</div>
+                )}
+                {upgrade.effect.processingPowerPerSec && (
+                  <div>+{formatNumber(upgrade.effect.processingPowerPerSec)} FLOPS/sec</div>
+                )}
+                {upgrade.effect.electricityPerSec && (
+                  <div>+{formatElectricity(upgrade.effect.electricityPerSec)}/sec</div>
+                )}
+                {upgrade.effect.satoshisPerSec && (() => {
+                  // For addictivity upgrades, show post-multiplier SATS/sec per level
+                  if (isAddictivityUpgrade) {
+                    const stageMultiplier = STAGES[resources.stage || 0]?.multiplier || 1;
+                    const [major, minor] = (resources.version || '0.1.0').split('.').map(Number);
+                    const versionMultiplier = Math.pow(VERSION_MULTIPLIERS.major, major) * 
+                                             Math.pow(VERSION_MULTIPLIERS.minor, minor);
+                    const totalMultiplier = stageMultiplier * versionMultiplier;
+                    // Show value per level (what one level gives you), not total
+                    const postMultiplierValue = upgrade.effect.satoshisPerSec * totalMultiplier;
+                    return <div>+{formatBitcoin(postMultiplierValue)}/sec</div>;
+                  }
+                  // For other upgrades, show base value
+                  return <div>+{formatBitcoin(upgrade.effect.satoshisPerSec)}/sec</div>;
+                })()}
+                {upgrade.effect.addictivityPerSec && (
+                  <div>+{formatNumber(upgrade.effect.addictivityPerSec)} Addictivity/sec</div>
+                )}
+              </div>
+            ) : null;
+          })()}
+          {/* Display token cost for addictivity upgrades (FLAT - no multipliers) */}
+          {(() => {
+            const isAddictivityUpgrade = UPGRADES.addictivity?.some(u => u.id === upgrade.id);
+            if (isAddictivityUpgrade && upgrade.effect?.tokensPerSec) {
+              // Token consumption is FLAT - show base value without multipliers
+              const flatValue = upgrade.effect.tokensPerSec * (resources.upgradeLevels?.[upgrade.id] || 0);
+              
+              return (
+                <div className="text-xs text-red-400 font-mono mb-3">
+                  <div>-{formatNumber(flatValue)} Tokens/sec</div>
+                </div>
+              );
+            }
+            return null;
+          })()}
         </div>
         
         {/* Cost Section - Individual Cost Cards */}
-        {(Object.keys(cost).length > 0 || upgrade.requiresProcessingPower || upgrade.costsGptMini) && (
+        {(Object.keys(cost).length > 0 || upgrade.requiresProcessingPower || upgrade.costsGptMini || upgrade.costsGptPro || upgrade.costsNeuralNetworks) && (
           <div className="mb-3">
             {/* Cost Section Header */}
             <div className="mb-2">
@@ -437,6 +513,7 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
                         <span className={`text-xs font-semibold ${textColor} font-mono whitespace-nowrap`}>
                           {resource === 'satoshis' ? formatBitcoin(amount) : 
                            resource === 'electricity' ? formatElectricity(amount) :
+                           resource === 'storage' ? formatStorage(amount) :
                            formatNumber(amount)}
                         </span>
                       </div>
@@ -482,6 +559,48 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
                         (resources.upgradeLevels || {})['gpt-mini'] >= upgrade.costsGptMini ? 'text-yellow-300' : 'text-red-400'
                       }`}>
                         {upgrade.costsGptMini} GPT Mini
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {upgrade.costsGptPro && (
+                <div 
+                  className="internal-cost-card flex-shrink-0"
+                  style={{ borderColor: 'rgba(234, 179, 8, 0.4)' }}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="bg-yellow-500/20 rounded w-6 h-6 flex items-center justify-center text-sm flex-shrink-0">
+                      <span>🤖</span>
+                    </div>
+                    <div className="flex flex-col">
+                      <div className="text-[9px] text-gray-400 leading-tight">Costs</div>
+                      <span className={`text-xs font-semibold font-mono leading-tight whitespace-nowrap ${
+                        (resources.upgradeLevels || {})['gpt-pro'] >= upgrade.costsGptPro ? 'text-yellow-300' : 'text-red-400'
+                      }`}>
+                        {upgrade.costsGptPro} GPT Pro
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {upgrade.costsNeuralNetworks && (
+                <div 
+                  className="internal-cost-card flex-shrink-0"
+                  style={{ borderColor: 'rgba(234, 179, 8, 0.4)' }}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="bg-yellow-500/20 rounded w-6 h-6 flex items-center justify-center text-sm flex-shrink-0">
+                      <span>🤖</span>
+                    </div>
+                    <div className="flex flex-col">
+                      <div className="text-[9px] text-gray-400 leading-tight">Costs</div>
+                      <span className={`text-xs font-semibold font-mono leading-tight whitespace-nowrap ${
+                        (resources.upgradeLevels || {})['neural-networks'] >= upgrade.costsNeuralNetworks ? 'text-yellow-300' : 'text-red-400'
+                      }`}>
+                        {upgrade.costsNeuralNetworks} Neural Networks
                       </span>
                     </div>
                   </div>
@@ -550,25 +669,48 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
             ) : null}
           </div>
         ) : (
-          /* Regular Upgrade: Cyberpunk Buy Button */
-          <button
-            onClick={handleClick}
-            disabled={!canBuy}
-            className={`cyberpunk-buy-button ${canBuy ? 'cyberpunk-buy-button-active' : 'cyberpunk-buy-button-disabled'}`}
-          >
-            <div className="cyberpunk-buy-button-content">
-              <span className="terminal-text">[PURCHASE]</span>
-              {currentLevel > 0 && (
-                <span className="cyberpunk-buy-button-level">Lv {currentLevel + 1}</span>
+          /* Regular Upgrade: Cyberpunk Buy Button + Toggle (if toggleable) */
+          <div className="flex items-center gap-2 w-full">
+            <button
+              onClick={handleClick}
+              disabled={!canBuy}
+              className={`cyberpunk-buy-button flex-1 ${canBuy ? 'cyberpunk-buy-button-active' : 'cyberpunk-buy-button-disabled'}`}
+            >
+              <div className="cyberpunk-buy-button-content">
+                <span className="terminal-text">[PURCHASE]</span>
+                {currentLevel > 0 && (
+                  <span className="cyberpunk-buy-button-level">Lv {currentLevel + 1}</span>
+                )}
+              </div>
+              {canBuy && (
+                <>
+                  <div className="cyberpunk-buy-button-scanlines"></div>
+                  <div className="cyberpunk-buy-button-glitch"></div>
+                </>
               )}
-            </div>
-            {canBuy && (
-              <>
-                <div className="cyberpunk-buy-button-scanlines"></div>
-                <div className="cyberpunk-buy-button-glitch"></div>
-              </>
-            )}
-          </button>
+            </button>
+            
+            {/* Toggle Switch - Show if toggleable, level > 0, and onToggle exists */}
+            {upgrade.isToggleable && currentLevel > 0 && onToggle ? (
+              <div 
+                className="cyberpunk-toggle-container" 
+                style={{ flexShrink: 0 }}
+                onClick={handleToggleClick}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleToggleClick(e);
+                  }
+                }}
+              >
+                <div className={`cyberpunk-toggle-label ${isToggled ? 'cyberpunk-toggle-on' : 'cyberpunk-toggle-off'}`}>
+                  <span className="cyberpunk-toggle-slider"></span>
+                </div>
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
       

@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { ACHIEVEMENTS } from '../utils/constants.js';
 
 const INITIAL_STATE = {
   // Resources
@@ -86,19 +87,51 @@ export function useGameState(initialState = null) {
       if (prev.achievements.includes(achievementId)) {
         return prev; // Already unlocked
       }
-      return {
+      
+      // Find the achievement to get its reward
+      const achievement = ACHIEVEMENTS.find(a => a.id === achievementId);
+      const reward = achievement?.reward || {};
+      
+      // Apply rewards
+      const updated = {
         ...prev,
         achievements: [...prev.achievements, achievementId],
       };
+      
+      // Add resource rewards
+      if (reward.tokens) updated.tokens = (updated.tokens || 0) + reward.tokens;
+      if (reward.satoshis) updated.satoshis = (updated.satoshis || 0) + reward.satoshis;
+      if (reward.processingPower) updated.processingPower = (updated.processingPower || 0) + reward.processingPower;
+      if (reward.electricity) updated.electricity = (updated.electricity || 0) + reward.electricity;
+      if (reward.storage) updated.storage = (updated.storage || 0) + reward.storage;
+      if (reward.addictivity) updated.addictivity = (updated.addictivity || 0) + reward.addictivity;
+      
+      // Apply upgrade level rewards
+      if (reward.upgradeLevels) {
+        updated.upgradeLevels = { ...updated.upgradeLevels };
+        for (const [upgradeId, levels] of Object.entries(reward.upgradeLevels)) {
+          updated.upgradeLevels[upgradeId] = (updated.upgradeLevels[upgradeId] || 0) + levels;
+        }
+      }
+      
+      return updated;
     });
   }, []);
   
   // Advance stage
   const advanceStage = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      stage: Math.min(prev.stage + 1, 15),
-    }));
+    setState(prev => {
+      const newStage = Math.min(prev.stage + 1, 15);
+      // Auto-increment minor version when advancing stages
+      const [major, minor] = prev.version.split('.').map(Number);
+      const newVersion = `${major}.${minor + 1}.0`;
+      
+      return {
+        ...prev,
+        stage: newStage,
+        version: newVersion,
+      };
+    });
   }, []);
   
   // Prestige (version up)
@@ -106,15 +139,24 @@ export function useGameState(initialState = null) {
     setState(prev => ({
       ...prev,
       version: newVersion,
-      // Reset resources but keep upgrades and achievements
+      // Reset everything except version (which provides the multiplier)
       tokens: 0,
       processingPower: 0,
       electricity: 0,
       storage: 0,
       addictivity: 0,
+      satoshis: 0,
       stage: 0,
-      // Keep total stats for achievements
-      // totalClicks, totalTokensGenerated, playTime, achievements, upgradeLevels are kept
+      upgradeLevels: {},
+      achievements: [],
+      totalClicks: 0,
+      totalTokensGenerated: 0,
+      playTime: 0,
+      startTime: Date.now(),
+      lastSaveTime: Date.now(),
+      activeEvents: {},
+      toggledUpgrades: {},
+      tokensHitZero: false,
     }));
   }, []);
   

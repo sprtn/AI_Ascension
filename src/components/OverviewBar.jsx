@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { ResourceDisplay } from './ResourceDisplay.jsx';
 import { ParticleEffect } from './ParticleEffect.jsx';
 import { calculateClickPower, calculateGeneration, calculateElectricityConsumption, calculateProcessingPowerConsumption, calculateNSFWDrain } from '../utils/calculations.js';
-import { STAGES, STAGE_REQUIREMENTS, UPGRADES } from '../utils/constants.js';
+import { STAGES, STAGE_REQUIREMENTS, UPGRADES, VERSION_MULTIPLIERS } from '../utils/constants.js';
 import { formatNumber, formatBitcoin, formatStorage, formatElectricity } from '../utils/formatters.js';
 
 export function OverviewBar({ gameState, gameActions, onResourceClick }) {
@@ -39,13 +39,25 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
     }
   }
   
-  // Calculate NET token rate (gross generation - NSFW drain) with event multipliers
-  // Note: NSFW drain is NOT multiplied by productionMultiplier (it's a fixed conversion rate)
-  const netTokenRate = (generation.tokens * productionMultiplier) - nsfwDrain.tokenDrainPerSec;
+  // Calculate NET token rate
+  // Token generation gets multipliers, token consumption from addictivity is FLAT (not multiplied)
+  // Get stage/version multipliers to match game loop calculation
+  const stageMultiplier = STAGES[gameState.state.stage || 0]?.multiplier || 1;
+  const [major, minor] = (gameState.state.version || '0.1.0').split('.').map(Number);
+  const versionMultiplier = Math.pow(VERSION_MULTIPLIERS.major, major) * 
+                           Math.pow(VERSION_MULTIPLIERS.minor, minor);
+  const totalMultiplier = stageMultiplier * versionMultiplier;
+  
+  // Apply multipliers to generation only, consumption is FLAT
+  const tokenGenerationWithMultipliers = (generation.tokenGeneration || 0) * totalMultiplier * productionMultiplier;
+  const tokenConsumptionFlat = generation.tokenConsumption || 0; // Flat - no multipliers
+  const nsfwDrainWithMultipliers = nsfwDrain.tokenDrainPerSec * productionMultiplier;
+  const netTokenRate = tokenGenerationWithMultipliers - tokenConsumptionFlat - nsfwDrainWithMultipliers;
   
   // Calculate consumption
   const electricityConsumption = calculateElectricityConsumption(
-    gameState.state.upgradeLevels
+    gameState.state.upgradeLevels,
+    gameState.state.toggledUpgrades || {}
   );
   const processingPowerConsumption = calculateProcessingPowerConsumption(
     gameState.state.upgradeLevels
@@ -217,6 +229,7 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
             <span className="text-sm font-mono font-semibold text-neon-cyan terminal-version">[v{gameState.state.version}]</span>
             <span className="text-sm text-neon-cyan font-mono">{'>>'}</span>
             <span className="text-sm text-neon-green font-mono terminal-stage">{currentStage.name.toUpperCase().replace(/\s+/g, '_')}</span>
+            <span className="text-sm text-neon-purple font-mono">({formatNumber(stageMultiplier)}x)</span>
             <span className="terminal-cursor-small">_</span>
           </div>
           {nextStage && (
@@ -234,21 +247,25 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
                   const info = resourceDisplayInfo[resource];
                   if (!info) return null;
                   
-                  // Format current value (without unit for storage)
-                  const currentFormatted = formatResourceValue(resource, current, false);
-                  // Format required value (with unit for storage, without for processing)
-                  let requiredFormatted = formatResourceValue(resource, required, resource === 'storage');
+                  // Format values based on resource type
+                  let currentFormatted, requiredFormatted;
                   
-                  // Add unit suffix based on resource type
-                  let unitSuffix = '';
-                  if (resource === 'processingPower') {
-                    // For processing, add unit at the end: "0/5 FLOPS/s"
-                    unitSuffix = ' FLOPS/s';
-                    requiredFormatted = formatNumber(required, 0);
-                  } else if (resource === 'storage') {
-                    // For storage, add unit at the end: "0/5 GB"
-                    unitSuffix = ' GB';
-                    requiredFormatted = formatNumber(required, 0);
+                  if (resource === 'storage') {
+                    // For storage, use formatStorage which handles GB/TB/PB conversion
+                    currentFormatted = formatStorage(current);
+                    requiredFormatted = formatStorage(required);
+                  } else if (resource === 'processingPower') {
+                    // For processing, show number with unit at end: "0/5 FLOPS/s"
+                    currentFormatted = formatNumber(current, 0);
+                    requiredFormatted = formatNumber(required, 0) + ' FLOPS/s';
+                  } else if (resource === 'electricity') {
+                    // For electricity, use formatElectricity
+                    currentFormatted = formatElectricity(current);
+                    requiredFormatted = formatElectricity(required);
+                  } else {
+                    // For other resources (tokens, addictivity), use formatNumber
+                    currentFormatted = formatResourceValue(resource, current, false);
+                    requiredFormatted = formatResourceValue(resource, required, false);
                   }
                   
                   return (
@@ -257,7 +274,7 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
                       <span className="text-neon-cyan">{info.name}</span>
                       <span className="text-gray-400"> {currentFormatted}</span>
                       <span className="text-gray-500">/</span>
-                      <span className="text-gray-400">{requiredFormatted}{unitSuffix}</span>
+                      <span className="text-gray-400">{requiredFormatted}</span>
                     </span>
                   );
                 })}

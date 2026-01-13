@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { formatNumber, formatBitcoin, formatStorage, formatElectricity } from '../utils/formatters.js';
+import { UPGRADES } from '../utils/constants.js';
 
 export function AchievementToast({ achievement, onDismiss, index = 0 }) {
   const [isVisible, setIsVisible] = useState(false);
@@ -47,6 +49,27 @@ export function AchievementToast({ achievement, onDismiss, index = 0 }) {
         <div className="achievement-toast-text">
           <div className="achievement-toast-name">{achievement.name}</div>
           <div className="achievement-toast-description">{achievement.description}</div>
+          {achievement.reward && (
+            <div className="achievement-toast-reward" style={{ marginTop: '4px', fontSize: '10px', color: '#00ff88' }}>
+              {achievement.reward.tokens && `+${formatNumber(achievement.reward.tokens)} Tokens `}
+              {achievement.reward.satoshis && `+${formatBitcoin(achievement.reward.satoshis)} `}
+              {achievement.reward.processingPower && `+${formatNumber(achievement.reward.processingPower)} FLOPS `}
+              {achievement.reward.electricity && `+${formatElectricity(achievement.reward.electricity)} `}
+              {achievement.reward.storage && `+${formatStorage(achievement.reward.storage)} `}
+              {achievement.reward.addictivity && `+${formatNumber(achievement.reward.addictivity)} Addictivity `}
+              {achievement.reward.upgradeLevels && Object.entries(achievement.reward.upgradeLevels).map(([upgradeId, levels]) => {
+                let upgradeName = upgradeId;
+                for (const category of Object.values(UPGRADES)) {
+                  const upgrade = category.find(u => u.id === upgradeId);
+                  if (upgrade) {
+                    upgradeName = upgrade.name;
+                    break;
+                  }
+                }
+                return `+${levels}x ${upgradeName} `;
+              })}
+            </div>
+          )}
         </div>
       </div>
       <div className="achievement-toast-glow"></div>

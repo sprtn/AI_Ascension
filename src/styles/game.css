@@ -1,3 +1,5 @@
+@import "../index.css";
+
 /* Custom game animations and effects */
 
 @keyframes particle-float {
@@ -973,6 +975,52 @@
 .cyberpunk-button-increase:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* Glow effect for holding buttons */
+.cyberpunk-button-holding {
+  position: relative;
+  overflow: visible;
+}
+
+.cyberpunk-button-glow {
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.6;
+  animation: button-glow-pulse 1s ease-in-out infinite;
+  transition: opacity 0.3s ease;
+}
+
+.cyberpunk-button-glow-increase {
+  background: radial-gradient(circle, rgba(0, 255, 255, 0.4) 0%, rgba(0, 255, 255, 0) 70%);
+  box-shadow: 
+    0 0 10px rgba(0, 255, 255, 0.6),
+    0 0 20px rgba(0, 255, 255, 0.4),
+    0 0 30px rgba(0, 255, 255, 0.2),
+    inset 0 0 10px rgba(0, 255, 255, 0.1);
+}
+
+.cyberpunk-button-glow-decrease {
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.4) 0%, rgba(168, 85, 247, 0) 70%);
+  box-shadow: 
+    0 0 10px rgba(168, 85, 247, 0.6),
+    0 0 20px rgba(168, 85, 247, 0.4),
+    0 0 30px rgba(168, 85, 247, 0.2),
+    inset 0 0 10px rgba(168, 85, 247, 0.1);
+}
+
+@keyframes button-glow-pulse {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
 }
 
 /* Cyberpunk Toggle Switch */

@@ -1,13 +1,13 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { ResourceDisplay } from './ResourceDisplay.jsx';
 import { ParticleEffect } from './ParticleEffect.jsx';
-import { calculateClickPower, calculateGeneration, calculateElectricityConsumption, calculateProcessingPowerConsumption } from '../utils/calculations.js';
-import { STAGES, STAGE_REQUIREMENTS } from '../utils/constants.js';
-import { formatNumber, formatBitcoin } from '../utils/formatters.js';
+import { calculateClickPower, calculateGeneration, calculateElectricityConsumption, calculateProcessingPowerConsumption, calculateNSFWDrain } from '../utils/calculations.js';
+import { STAGES, STAGE_REQUIREMENTS, UPGRADES } from '../utils/constants.js';
+import { formatNumber, formatBitcoin, formatStorage, formatElectricity } from '../utils/formatters.js';
 
 export function OverviewBar({ gameState, gameActions, onResourceClick }) {
-  const [clickPosition, setClickPosition] = useState(null);
-  const [showParticles, setShowParticles] = useState(false);
+  const [particleEffects, setParticleEffects] = useState([]);
+  const particleIdRef = useRef(0);
   
   const clickPower = calculateClickPower(
     gameState.state.upgradeLevels,
@@ -22,6 +22,26 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
     gameState.state.version,
     gameState.state.toggledUpgrades || {}
   );
+  
+  // Calculate NSFW drain rate (with multipliers)
+  const nsfwDrain = calculateNSFWDrain(
+    gameState.state.upgradeLevels,
+    gameState.state.stage,
+    gameState.state.version,
+    gameState.state.toggledUpgrades || {}
+  );
+  
+  // Apply active event multipliers (to match game loop behavior)
+  let productionMultiplier = 1;
+  for (const eventData of Object.values(gameState.state.activeEvents || {})) {
+    if (eventData.effect?.productionMultiplier) {
+      productionMultiplier *= eventData.effect.productionMultiplier;
+    }
+  }
+  
+  // Calculate NET token rate (gross generation - NSFW drain) with event multipliers
+  // Note: NSFW drain is NOT multiplied by productionMultiplier (it's a fixed conversion rate)
+  const netTokenRate = (generation.tokens * productionMultiplier) - nsfwDrain.tokenDrainPerSec;
   
   // Calculate consumption
   const electricityConsumption = calculateElectricityConsumption(
@@ -39,6 +59,38 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
   const nextStage = STAGES[gameState.state.stage + 1];
   const stageRequirements = STAGE_REQUIREMENTS[gameState.state.stage + 1] || {};
   
+  // Resource icons and display names
+  const resourceDisplayInfo = {
+    tokens: { icon: '🪙', name: 'Tokens' },
+    processingPower: { icon: '💻', name: 'Processing' },
+    electricity: { icon: '⚡', name: 'Electricity' },
+    storage: { icon: '💾', name: 'Storage' },
+    addictivity: { icon: '🧠', name: 'Addictivity' },
+    satoshis: { icon: '₿', name: 'Bitcoin' },
+  };
+
+  // Helper function to format resource value for display
+  const formatResourceValue = (resource, value, isRequired = false) => {
+    switch (resource) {
+      case 'electricity':
+        return formatElectricity(value);
+      case 'storage':
+        // For storage, remove GB from current value, keep it for required
+        if (isRequired) {
+          return formatStorage(value);
+        } else {
+          return formatNumber(value, 0);
+        }
+      case 'satoshis':
+        return formatBitcoin(value);
+      case 'processingPower':
+        // For processing, just return the number (unit will be added separately)
+        return formatNumber(value, 0);
+      default:
+        return formatNumber(value);
+    }
+  };
+
   // Calculate stage progress
   let progress = 0;
   if (nextStage) {
@@ -56,16 +108,20 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
   }
   
   const handleClick = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    setClickPosition({ x: e.clientX, y: e.clientY });
-    setShowParticles(true);
-    setTimeout(() => setShowParticles(false), 1000);
+    // Use the actual mouse click position for particle origin
+    const id = particleIdRef.current++;
+    setParticleEffects(prev => [...prev, { 
+      id, 
+      x: e.clientX, 
+      y: e.clientY 
+    }]);
     
     gameActions.addClick();
     gameActions.addResources({ tokens: clickPower });
+  };
+
+  const handleParticleComplete = (id) => {
+    setParticleEffects(prev => prev.filter(effect => effect.id !== id));
   };
   
   return (
@@ -75,7 +131,7 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
         <ResourceDisplay
           label="Tokens"
           value={gameState.state.tokens}
-          perSecond={generation.tokens}
+          perSecond={netTokenRate}
           icon="🪙"
           color="neon-cyan"
           onClick={() => onResourceClick && onResourceClick('tokens')}
@@ -164,12 +220,49 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
             <span className="terminal-cursor-small">_</span>
           </div>
           {nextStage && (
-            <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-neon-purple to-neon-cyan transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              />
-            </div>
+            <>
+              <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden mb-2">
+                <div
+                  className="h-full bg-gradient-to-r from-neon-purple to-neon-cyan transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              {/* Progress Status */}
+              <div className="flex flex-wrap gap-2 text-xs font-mono">
+                {Object.entries(stageRequirements).map(([resource, required]) => {
+                  const current = gameState.state[resource] || 0;
+                  const info = resourceDisplayInfo[resource];
+                  if (!info) return null;
+                  
+                  // Format current value (without unit for storage)
+                  const currentFormatted = formatResourceValue(resource, current, false);
+                  // Format required value (with unit for storage, without for processing)
+                  let requiredFormatted = formatResourceValue(resource, required, resource === 'storage');
+                  
+                  // Add unit suffix based on resource type
+                  let unitSuffix = '';
+                  if (resource === 'processingPower') {
+                    // For processing, add unit at the end: "0/5 FLOPS/s"
+                    unitSuffix = ' FLOPS/s';
+                    requiredFormatted = formatNumber(required, 0);
+                  } else if (resource === 'storage') {
+                    // For storage, add unit at the end: "0/5 GB"
+                    unitSuffix = ' GB';
+                    requiredFormatted = formatNumber(required, 0);
+                  }
+                  
+                  return (
+                    <span key={resource} className="text-gray-300">
+                      <span className="mr-1">{info.icon}</span>
+                      <span className="text-neon-cyan">{info.name}</span>
+                      <span className="text-gray-400"> {currentFormatted}</span>
+                      <span className="text-gray-500">/</span>
+                      <span className="text-gray-400">{requiredFormatted}{unitSuffix}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -188,15 +281,18 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
         </div>
       )}
       
-      {/* Particle Effects */}
-      {showParticles && clickPosition && (
+      {/* Particle Effects - One per click */}
+      {particleEffects.map(effect => (
         <ParticleEffect
-          x={clickPosition.x}
-          y={clickPosition.y}
+          key={effect.id}
+          id={effect.id}
+          x={effect.x}
+          y={effect.y}
           amount={15}
           color="#00ffff"
+          onComplete={() => handleParticleComplete(effect.id)}
         />
-      )}
+      ))}
     </div>
   );
 }

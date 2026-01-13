@@ -36,7 +36,7 @@ export const UPGRADES = {
       description: 'Outsourced click farming. They are not as efficient as you are.',
       baseCost: { satoshis: 1000 },
       costMultiplier: 1,
-      effect: { tokensPerSec: 10 },
+      effect: { tokensPerSec: 1 },
       unlockStage: 0,
     },
     {
@@ -596,7 +596,7 @@ export const EVENTS = [
 // Stage progression requirements (resources needed to advance)
 export const STAGE_REQUIREMENTS = [
   { tokens: 0 }, // Stage 0 - starting
-  { tokens: 1000, processingPower: 100 },
+  { tokens: 1000, processingPower: 5, storage: 5 },
   { tokens: 10000, processingPower: 1000, electricity: 500 },
   { tokens: 100000, processingPower: 10000, electricity: 5000, storage: 100 },
   { tokens: 1000000, processingPower: 100000, electricity: 50000, storage: 1000 },

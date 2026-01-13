@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export function AchievementToast({ achievement, onDismiss, index = 0 }) {
   const [isVisible, setIsVisible] = useState(false);
@@ -31,7 +31,7 @@ export function AchievementToast({ achievement, onDismiss, index = 0 }) {
   return (
     <div
       className={`achievement-toast ${isVisible && !isExiting ? 'achievement-toast-visible' : 'achievement-toast-exiting'}`}
-      style={{ bottom: `${20 + index * 100}px` }}
+      style={{ bottom: `${20 + index * 90}px` }}
       onClick={handleClick}
       role="button"
       tabIndex={0}
@@ -57,28 +57,50 @@ export function AchievementToast({ achievement, onDismiss, index = 0 }) {
 
 export function AchievementToastContainer({ achievements }) {
   const [activeToasts, setActiveToasts] = useState([]);
-  // Initialize with achievements that are already in the list (from saved state)
-  // so we don't show toasts for achievements that were unlocked before mount
-  const [shownAchievements, setShownAchievements] = useState(() => 
-    new Set(achievements.map(a => a.id))
-  );
-  const [isInitialized, setIsInitialized] = useState(false);
+  // Track which achievement IDs we've already shown to avoid duplicates
+  const shownAchievementIdsRef = useRef(new Set());
+  const prevAchievementIdsRef = useRef(new Set());
+  const isInitializedRef = useRef(false);
   
   useEffect(() => {
-    // On first mount, mark as initialized but don't show toasts for existing achievements
-    if (!isInitialized) {
-      setIsInitialized(true);
+    // Get current achievement IDs
+    const currentIds = new Set(achievements.map(a => a.id));
+    
+    // On first mount, mark all current achievements as shown (don't show toasts for pre-existing achievements)
+    if (!isInitializedRef.current) {
+      shownAchievementIdsRef.current = new Set(currentIds);
+      prevAchievementIdsRef.current = new Set(currentIds);
+      isInitializedRef.current = true;
       return;
     }
     
-    // After initialization, only show toasts for NEW achievements
-    achievements.forEach(achievement => {
-      if (!shownAchievements.has(achievement.id) && !activeToasts.find(t => t.id === achievement.id)) {
-        setActiveToasts(prev => [...prev, achievement]);
-        setShownAchievements(prev => new Set([...prev, achievement.id]));
-      }
-    });
-  }, [achievements, activeToasts, shownAchievements, isInitialized]);
+    // Find newly unlocked achievements (in current but not in previous)
+    const newAchievementIds = [...currentIds].filter(id => 
+      !prevAchievementIdsRef.current.has(id) && 
+      !shownAchievementIdsRef.current.has(id)
+    );
+    
+    // Get the full achievement objects for new IDs
+    const newAchievements = achievements.filter(a => newAchievementIds.includes(a.id));
+    
+    // Add new achievements to toasts
+    if (newAchievements.length > 0) {
+      setActiveToasts(prev => {
+        // Filter out any duplicates and add new ones
+        const existingIds = new Set(prev.map(t => t.id));
+        const toAdd = newAchievements.filter(a => !existingIds.has(a.id));
+        return [...prev, ...toAdd];
+      });
+      
+      // Mark as shown
+      newAchievements.forEach(a => {
+        shownAchievementIdsRef.current.add(a.id);
+      });
+    }
+    
+    // Update ref for next comparison
+    prevAchievementIdsRef.current = new Set(currentIds);
+  }, [achievements]);
   
   const handleDismiss = (achievementId) => {
     setActiveToasts(prev => prev.filter(a => a.id !== achievementId));
@@ -90,7 +112,7 @@ export function AchievementToastContainer({ achievements }) {
         <AchievementToast
           key={achievement.id}
           achievement={achievement}
-          index={index}
+          index={activeToasts.length - 1 - index}
           onDismiss={() => handleDismiss(achievement.id)}
         />
       ))}

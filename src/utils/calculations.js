@@ -1,6 +1,37 @@
 import { UPGRADES, STAGES, VERSION_MULTIPLIERS } from './constants.js';
 
 /**
+ * Calculate NSFW token drain rate per second (with multipliers)
+ * @param {Object} upgradeLevels - Map of upgrade IDs to levels
+ * @param {number} stage - Current stage
+ * @param {string} version - Current version string
+ * @param {Object} toggledUpgrades - Map of upgrade IDs to their toggle state
+ * @returns {Object} { tokenDrainPerSec, satsPerSec } - Drain rates per second
+ */
+export function calculateNSFWDrain(upgradeLevels, stage, version, toggledUpgrades = {}) {
+  let totalTokenDrainPerSec = 0;
+  let totalSatsPerSec = 0;
+  
+  // NSFW conversion is a fixed 1:1 conversion rate - NOT affected by multipliers
+  // It converts tokens to SATS, so multipliers should not apply
+  
+  for (const upgrade of UPGRADES.addictivity || []) {
+    if (upgrade.effect?.tokenToSatsConversion) {
+      const level = upgradeLevels[upgrade.id] || 0;
+      const isToggled = toggledUpgrades[upgrade.id] !== false; // Default to true
+      if (isToggled && level > 0) {
+        const conversion = upgrade.effect.tokenToSatsConversion;
+        // Fixed conversion rate - no multipliers applied
+        totalTokenDrainPerSec += conversion.tokens * level;
+        totalSatsPerSec += conversion.satoshis * level;
+      }
+    }
+  }
+  
+  return { tokenDrainPerSec: totalTokenDrainPerSec, satsPerSec: totalSatsPerSec };
+}
+
+/**
  * Calculate the cost of an upgrade at a given level
  * @param {Object} upgrade - Upgrade definition
  * @param {number} level - Current level of the upgrade
@@ -71,19 +102,19 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
       
       // Calculate effect per level
       if (upgrade.effect.tokensPerSec) {
-        generation.tokens += upgrade.effect.tokensPerSec * totalMultiplier;
+        generation.tokens += upgrade.effect.tokensPerSec * level * totalMultiplier;
       }
       if (upgrade.effect.processingPowerPerSec) {
-        generation.processingPower += upgrade.effect.processingPowerPerSec * totalMultiplier;
+        generation.processingPower += upgrade.effect.processingPowerPerSec * level * totalMultiplier;
       }
       if (upgrade.effect.electricityPerSec) {
-        generation.electricity += upgrade.effect.electricityPerSec * totalMultiplier;
+        generation.electricity += upgrade.effect.electricityPerSec * level * totalMultiplier;
       }
       if (upgrade.effect.addictivityPerSec) {
-        generation.addictivity += upgrade.effect.addictivityPerSec * totalMultiplier;
+        generation.addictivity += upgrade.effect.addictivityPerSec * level * totalMultiplier;
       }
       if (upgrade.effect.satoshisPerSec) {
-        generation.satoshis += upgrade.effect.satoshisPerSec * totalMultiplier;
+        generation.satoshis += upgrade.effect.satoshisPerSec * level * totalMultiplier;
       }
       
       // For addictivity category: sum all SATS/sec values to show as Addictivity
@@ -95,12 +126,13 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
           if (isToggled && upgrade.effect.tokenToSatsConversion) {
             // NSFW converts tokens to SATS: 1 token = 1 SAT/sec per level
             // Show the SATS/sec rate it would produce (1 SAT/sec per level)
+            // NSFW conversion is a fixed rate - NOT affected by multipliers
             const conversionRate = upgrade.effect.tokenToSatsConversion.satoshis || 1;
-            generation.addictivity += conversionRate * totalMultiplier;
+            generation.addictivity += conversionRate * level;
           }
         } else if (upgrade.effect.satoshisPerSec) {
           // All other addictivity upgrades contribute their SATS/sec to addictivity display
-          generation.addictivity += upgrade.effect.satoshisPerSec * totalMultiplier;
+          generation.addictivity += upgrade.effect.satoshisPerSec * level * totalMultiplier;
         }
       }
       

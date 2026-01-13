@@ -1,5 +1,7 @@
+import { useState, useEffect, useRef } from 'react';
 import { formatNumber, formatBitcoin, formatElectricity } from '../utils/formatters.js';
 import { calculateUpgradeCost, canAfford, calculateGeneration, calculateProcessingPowerConsumption } from '../utils/calculations.js';
+import { ParticleEffect } from './ParticleEffect.jsx';
 
 export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, onToggle }) {
   const currentLevel = level || 0;
@@ -47,14 +49,69 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
     ? (resources.toggledUpgrades?.[upgrade.id] !== false) // Default to true
     : false;
   
-  const handleClick = () => {
+  const handleClick = (e) => {
     if (canBuy) {
+      // Create particle effect at click position
+      if (e) {
+        const id = particleIdRef.current++;
+        setParticleEffects(prev => [...prev, { 
+          id, 
+          x: e.clientX, 
+          y: e.clientY 
+        }]);
+      }
+      
       onPurchase(upgrade.id, currentLevel + 1, cost, upgrade.effect);
     }
   };
+
+  const handleParticleComplete = (id) => {
+    setParticleEffects(prev => prev.filter(effect => effect.id !== id));
+  };
   
+  // Click-and-hold state for + and - buttons
+  const [isHoldingIncrease, setIsHoldingIncrease] = useState(false);
+  const [isHoldingDecrease, setIsHoldingDecrease] = useState(false);
+  const [isGlowingIncrease, setIsGlowingIncrease] = useState(false);
+  const [isGlowingDecrease, setIsGlowingDecrease] = useState(false);
+  const increaseIntervalRef = useRef(null);
+  const decreaseIntervalRef = useRef(null);
+  const increaseHoldTimeoutRef = useRef(null);
+  const decreaseHoldTimeoutRef = useRef(null);
+  const holdStartTimeRef = useRef(0);
+  
+  // Particle effects for purchase button clicks
+  const [particleEffects, setParticleEffects] = useState([]);
+  const particleIdRef = useRef(0);
+  
+  // Refs to track latest values for intervals
+  const latestValuesRef = useRef({ level, canBuy, cost, upgrade, resources, hasResourceCost, disabled, onPurchase });
+  
+  // Update refs when values change
+  useEffect(() => {
+    latestValuesRef.current = { level, canBuy, cost, upgrade, resources, hasResourceCost, disabled, onPurchase };
+  }, [level, canBuy, cost, upgrade, resources, hasResourceCost, disabled, onPurchase]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (increaseHoldTimeoutRef.current) {
+        clearTimeout(increaseHoldTimeoutRef.current);
+      }
+      if (decreaseHoldTimeoutRef.current) {
+        clearTimeout(decreaseHoldTimeoutRef.current);
+      }
+      if (increaseIntervalRef.current) {
+        clearTimeout(increaseIntervalRef.current);
+      }
+      if (decreaseIntervalRef.current) {
+        clearTimeout(decreaseIntervalRef.current);
+      }
+    };
+  }, []);
+
   const handleDecrease = (e) => {
-    e.stopPropagation();
+    if (e) e.stopPropagation();
     if (currentLevel > 0 && onPurchase) {
       // Decrease level (no cost, just set level lower)
       // Note: In a full implementation, you'd want to refund resources
@@ -63,11 +120,160 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
   };
   
   const handleIncrease = (e) => {
-    e.stopPropagation();
+    if (e) e.stopPropagation();
     if (canBuy) {
       onPurchase(upgrade.id, currentLevel + 1, cost, upgrade.effect);
     }
   };
+
+  // Handle mouse down for increase button
+  const handleIncreaseMouseDown = (e) => {
+    e.stopPropagation();
+    if (!canBuy) return;
+    
+    // Immediate single click
+    handleIncrease(e);
+    
+    // Set up hold detection with delay
+    holdStartTimeRef.current = Date.now();
+    increaseHoldTimeoutRef.current = setTimeout(() => {
+      // Hold threshold reached - start auto-incrementing
+      setIsHoldingIncrease(true);
+      setIsGlowingIncrease(true);
+    }, 400); // 400ms hold threshold
+  };
+
+  // Handle mouse down for decrease button
+  const handleDecreaseMouseDown = (e) => {
+    e.stopPropagation();
+    if (currentLevel === 0) return;
+    
+    // Immediate single click
+    handleDecrease(e);
+    
+    // Set up hold detection with delay
+    holdStartTimeRef.current = Date.now();
+    decreaseHoldTimeoutRef.current = setTimeout(() => {
+      // Hold threshold reached - start auto-decrementing
+      setIsHoldingDecrease(true);
+      setIsGlowingDecrease(true);
+    }, 400); // 400ms hold threshold
+  };
+
+  // Handle mouse up/leave - stop holding
+  const handleMouseUp = () => {
+    // Clear hold timeouts
+    if (increaseHoldTimeoutRef.current) {
+      clearTimeout(increaseHoldTimeoutRef.current);
+      increaseHoldTimeoutRef.current = null;
+    }
+    if (decreaseHoldTimeoutRef.current) {
+      clearTimeout(decreaseHoldTimeoutRef.current);
+      decreaseHoldTimeoutRef.current = null;
+    }
+    
+    // Stop holding and remove glow
+    setIsHoldingIncrease(false);
+    setIsHoldingDecrease(false);
+    setIsGlowingIncrease(false);
+    setIsGlowingDecrease(false);
+    holdStartTimeRef.current = 0;
+  };
+
+  // Effect for increase button hold with acceleration
+  useEffect(() => {
+    if (isHoldingIncrease) {
+      let interval = 200; // Start slow: 200ms
+      const startTime = Date.now();
+      
+      const tick = () => {
+        const latest = latestValuesRef.current;
+        const currentLvl = latest.level || 0;
+        const currentCost = calculateUpgradeCost(latest.upgrade, currentLvl);
+        const resourceCheck = latest.hasResourceCost ? canAfford(latest.resources, currentCost) : true;
+        const maxLvl = latest.upgrade.maxLevel || Infinity;
+        const canStillBuy = resourceCheck && currentLvl < maxLvl && !latest.disabled;
+        
+        if (canStillBuy && latest.onPurchase) {
+          latest.onPurchase(latest.upgrade.id, currentLvl + 1, currentCost, latest.upgrade.effect);
+          
+          // Acceleration: speed up over time
+          const holdDuration = Date.now() - startTime;
+          if (holdDuration > 2000) {
+            interval = 100; // Fast: 100ms after 2 seconds
+          } else if (holdDuration > 1000) {
+            interval = 150; // Medium: 150ms after 1 second
+          }
+          // else keep at 200ms (slow)
+          
+          // Schedule next tick with current interval
+          increaseIntervalRef.current = setTimeout(tick, interval);
+        } else {
+          setIsHoldingIncrease(false);
+          setIsGlowingIncrease(false);
+        }
+      };
+      
+      // Start first tick
+      increaseIntervalRef.current = setTimeout(tick, interval);
+    } else {
+      if (increaseIntervalRef.current) {
+        clearTimeout(increaseIntervalRef.current);
+        increaseIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (increaseIntervalRef.current) {
+        clearTimeout(increaseIntervalRef.current);
+      }
+    };
+  }, [isHoldingIncrease]);
+
+  // Effect for decrease button hold with acceleration
+  useEffect(() => {
+    if (isHoldingDecrease) {
+      let interval = 200; // Start slow: 200ms
+      const startTime = Date.now();
+      
+      const tick = () => {
+        const latest = latestValuesRef.current;
+        const currentLvl = latest.level || 0;
+        if (currentLvl > 0 && latest.onPurchase) {
+          latest.onPurchase(latest.upgrade.id, currentLvl - 1, {}, latest.upgrade.effect);
+          
+          // Acceleration: speed up over time
+          const holdDuration = Date.now() - startTime;
+          if (holdDuration > 2000) {
+            interval = 100; // Fast: 100ms after 2 seconds
+          } else if (holdDuration > 1000) {
+            interval = 150; // Medium: 150ms after 1 second
+          }
+          // else keep at 200ms (slow)
+          
+          // Schedule next tick with current interval
+          decreaseIntervalRef.current = setTimeout(tick, interval);
+        } else {
+          setIsHoldingDecrease(false);
+          setIsGlowingDecrease(false);
+        }
+      };
+      
+      // Start first tick
+      decreaseIntervalRef.current = setTimeout(tick, interval);
+    } else {
+      if (decreaseIntervalRef.current) {
+        clearTimeout(decreaseIntervalRef.current);
+        decreaseIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (decreaseIntervalRef.current) {
+        clearTimeout(decreaseIntervalRef.current);
+      }
+    };
+  }, [isHoldingDecrease]);
   
   const handleToggle = (e) => {
     if (e) {
@@ -290,24 +496,36 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
           <div className="flex items-center gap-2 w-full" style={{ flexWrap: 'nowrap' }}>
             <button
               onClick={handleDecrease}
+              onMouseDown={handleDecreaseMouseDown}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
               disabled={currentLevel === 0}
-              className="cyberpunk-button-small cyberpunk-button-decrease"
+              className={`cyberpunk-button-small cyberpunk-button-decrease ${isGlowingDecrease ? 'cyberpunk-button-holding' : ''}`}
               style={{ flexShrink: 0 }}
-              title="Decrease level"
+              title="Decrease level (hold to repeat)"
             >
               <span className="terminal-text">-</span>
+              {isGlowingDecrease && (
+                <div className="cyberpunk-button-glow cyberpunk-button-glow-decrease"></div>
+              )}
             </button>
             <div className="text-center px-3 py-2 rounded bg-gray-800/50 border border-neon-cyan/30 min-w-[60px]" style={{ flexShrink: 0 }}>
               <span className="text-neon-cyan font-mono font-bold terminal-text">{currentLevel}</span>
             </div>
             <button
               onClick={handleIncrease}
+              onMouseDown={handleIncreaseMouseDown}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
               disabled={!canBuy}
-              className="cyberpunk-button-small cyberpunk-button-increase"
+              className={`cyberpunk-button-small cyberpunk-button-increase ${isGlowingIncrease ? 'cyberpunk-button-holding' : ''}`}
               style={{ flexShrink: 0 }}
-              title="Increase level"
+              title="Increase level (hold to repeat)"
             >
               <span className="terminal-text">+</span>
+              {isGlowingIncrease && (
+                <div className="cyberpunk-button-glow cyberpunk-button-glow-increase"></div>
+              )}
             </button>
             
             {/* Toggle Switch - Show if level > 0 and onToggle exists */}
@@ -353,6 +571,19 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
           </button>
         )}
       </div>
+      
+      {/* Particle Effects - One per purchase click */}
+      {particleEffects.map(effect => (
+        <ParticleEffect
+          key={effect.id}
+          id={effect.id}
+          x={effect.x}
+          y={effect.y}
+          amount={15}
+          color="#00ffff"
+          onComplete={() => handleParticleComplete(effect.id)}
+        />
+      ))}
     </div>
   );
 }

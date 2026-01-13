@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { calculateGeneration, calculateClickPower, calculateElectricityConsumption, calculateProcessingPowerConsumption } from '../utils/calculations.js';
+import { calculateGeneration, calculateClickPower, calculateElectricityConsumption, calculateProcessingPowerConsumption, calculateNSFWDrain } from '../utils/calculations.js';
 import { STAGE_REQUIREMENTS, UPGRADES } from '../utils/constants.js';
 
 const TICK_INTERVAL = 1000 / 60; // 60 FPS
@@ -26,9 +26,11 @@ export function useGameLoop(gameState, gameActions) {
       accumulatedTimeRef.current += deltaTime;
       
       // Update every ~100ms for smoother updates
-      if (accumulatedTimeRef.current >= 100) {
-        const seconds = accumulatedTimeRef.current / 1000;
-        accumulatedTimeRef.current = 0;
+      // Process in fixed chunks to maintain accuracy
+      const PROCESS_INTERVAL = 100; // ms
+      while (accumulatedTimeRef.current >= PROCESS_INTERVAL) {
+        const seconds = PROCESS_INTERVAL / 1000; // Always 0.1 seconds for consistency
+        accumulatedTimeRef.current -= PROCESS_INTERVAL;
         
         // Get current state from ref (always latest)
         const currentState = gameStateRef.current;
@@ -84,21 +86,15 @@ export function useGameLoop(gameState, gameActions) {
         const tokensGenerated = generation.tokens * seconds;
         const tokensAfterGeneration = currentTokens + tokensGenerated;
         
-        // Calculate total token drain per second from all active NSFW generators
-        let totalTokenDrainPerSec = 0;
-        let totalSatsPerSec = 0;
-        
-        for (const upgrade of UPGRADES.addictivity || []) {
-          if (upgrade.effect?.tokenToSatsConversion) {
-            const level = (currentState.upgradeLevels || {})[upgrade.id] || 0;
-            const isToggled = toggledUpgrades[upgrade.id] !== false; // Default to true
-            if (isToggled && level > 0) {
-              const conversion = upgrade.effect.tokenToSatsConversion;
-              totalTokenDrainPerSec += conversion.tokens * level;
-              totalSatsPerSec += conversion.satoshis * level;
-            }
-          }
-        }
+        // Calculate total token drain per second from all active NSFW generators (with multipliers)
+        const nsfwDrain = calculateNSFWDrain(
+          currentState.upgradeLevels,
+          currentState.stage,
+          currentState.version,
+          toggledUpgrades
+        );
+        const totalTokenDrainPerSec = nsfwDrain.tokenDrainPerSec;
+        const totalSatsPerSec = nsfwDrain.satsPerSec;
         
         // Calculate drain for this tick
         const tokenDrainThisTick = totalTokenDrainPerSec * seconds;
@@ -145,20 +141,16 @@ export function useGameLoop(gameState, gameActions) {
           }
         } else {
           // Update resources normally, then apply conversion
+          // Combine all updates into a single call to avoid batching issues
+          const tokenChange = tokensGenerated - (totalTokenDrainPerSec > 0 ? tokenDrainThisTick : 0);
+          const satsChange = generation.satoshis * seconds + (totalTokenDrainPerSec > 0 ? totalSatsPerSec * seconds : 0);
+          
           gameActionsRef.current.addResources({
-            tokens: tokensGenerated,
+            tokens: tokenChange,
             addictivity: generation.addictivity * seconds,
-            satoshis: generation.satoshis * seconds,
+            satoshis: satsChange,
             totalTokensGenerated: generation.tokens * seconds,
           });
-          
-          // Apply token conversion drain
-          if (totalTokenDrainPerSec > 0) {
-            gameActionsRef.current.addResources({
-              tokens: -tokenDrainThisTick,
-              satoshis: totalSatsPerSec * seconds,
-            });
-          }
         }
         
         // Set Processing Power and Electricity to excess values (not accumulated)
@@ -185,10 +177,12 @@ export function useGameLoop(gameState, gameActions) {
           }
         }
         
-        // Update play time
-        const playTime = (now - currentState.startTime) / 1000;
-        gameActionsRef.current.updatePlayTime(playTime);
       }
+      
+      // Update play time once per frame (not per processed interval)
+      const currentState = gameStateRef.current;
+      const playTime = (now - currentState.startTime) / 1000;
+      gameActionsRef.current.updatePlayTime(playTime);
       
       requestAnimationFrame(tick);
     };

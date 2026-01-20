@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { formatNumber, formatBitcoin, formatElectricity, formatStorage } from '../utils/formatters.js';
-import { calculateUpgradeCost, canAfford, calculateGeneration, calculateProcessingPowerConsumption } from '../utils/calculations.js';
+import { calculateUpgradeCost, canAfford, calculateGeneration } from '../utils/calculations.js';
 import { UPGRADES, STAGES, VERSION_MULTIPLIERS } from '../utils/constants.js';
 import { ParticleEffect } from './ParticleEffect.jsx';
 
@@ -8,28 +8,22 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
   const currentLevel = level || 0;
   const cost = calculateUpgradeCost(upgrade, currentLevel);
   
+  // Check if this is an inventory-type upgrade (no effects, used as resource)
+  const isInventoryUpgrade = !upgrade.effect || Object.keys(upgrade.effect).length === 0;
+  const levelLabel = isInventoryUpgrade ? 'Amount' : 'Lv';
+  const levelLabelFull = isInventoryUpgrade ? 'Amount' : 'Level';
+  
   // If cost is empty, it means the upgrade only requires GPT Mini (no resource cost)
   const hasResourceCost = Object.keys(cost).length > 0;
-  
-  // Calculate generation to check processing power requirements
-  const generation = calculateGeneration(
-    resources.upgradeLevels || {},
-    resources.stage || 0,
-    resources.version || '0.1.0',
-    resources.toggledUpgrades || {}
-  );
-  
-  // Calculate processing power consumption for excess calculation
-  const processingPowerConsumption = calculateProcessingPowerConsumption(resources.upgradeLevels || {});
-  const excessProcessingPower = Math.max(0, generation.processingPower - processingPowerConsumption);
   
   // Check affordability
   // If there's no resource cost, it's affordable if GPT Mini requirement is met
   let affordable = hasResourceCost ? canAfford(resources, cost) : true;
   
-  // Check processing power requirement
+  // Check processing power requirement (use current processingPower value directly)
   if (upgrade.requiresProcessingPower) {
-    if (excessProcessingPower < upgrade.requiresProcessingPower) {
+    const currentProcessingPower = resources.processingPower || 0;
+    if (currentProcessingPower < upgrade.requiresProcessingPower) {
       affordable = false;
     }
   }
@@ -58,7 +52,13 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
     }
   }
   
-  const maxLevel = upgrade.maxLevel || Infinity;
+  // Calculate maxLevel - for NSFW Clickbait, multiply by stage multiplier
+  let maxLevel = upgrade.maxLevel || Infinity;
+  if (upgrade.id === 'nsfw-reddit-clickbait' && upgrade.maxLevel) {
+    const stageMultiplier = STAGES[resources.stage || 0]?.multiplier || 1;
+    maxLevel = upgrade.maxLevel * stageMultiplier;
+  }
+  
   const canBuy = affordable && currentLevel < maxLevel && !disabled;
   
   // Check if upgrade is toggled (for toggleable upgrades like token conversion or overclocking)
@@ -142,6 +142,22 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
     if (e) e.stopPropagation();
     if (canBuy) {
       onPurchase(upgrade.id, currentLevel + 1, cost, upgrade.effect);
+    }
+  };
+
+  const handleMax = (e) => {
+    if (e) e.stopPropagation();
+    if (!canBuy || maxLevel === Infinity || currentLevel >= maxLevel) return;
+    
+    // Buy levels up to max
+    for (let i = currentLevel; i < maxLevel; i++) {
+      const levelCost = calculateUpgradeCost(upgrade, i);
+      const resourceCheck = Object.keys(levelCost).length > 0 ? canAfford(resources, levelCost) : true;
+      if (resourceCheck) {
+        onPurchase(upgrade.id, i + 1, levelCost, upgrade.effect);
+      } else {
+        break; // Stop if can't afford next level
+      }
     }
   };
 
@@ -312,25 +328,26 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
     handleToggle(e);
   };
   
-  // Check if this is the NSFW upgrade
+  // Check if this is the NSFW upgrade or Overclocking
   const isNsfwUpgrade = upgrade.id === 'nsfw-reddit-clickbait';
+  const isOverclockingUpgrade = upgrade.id === 'overclocking';
   
   // Determine color based on category (could be passed as prop in future)
   const cardColor = 'neon-cyan';
   
   return (
     <div 
-      className={`upgrade-card ${canBuy && !isNsfwUpgrade ? 'upgrade-card-clickable' : 'upgrade-card-disabled'}`}
+      className={`upgrade-card ${canBuy && !isNsfwUpgrade && !isOverclockingUpgrade ? 'upgrade-card-clickable' : 'upgrade-card-disabled'}`}
       data-color={cardColor}
       data-forbidden={upgrade.isForbidden ? 'true' : 'false'}
-      onClick={canBuy && !isNsfwUpgrade ? handleClick : undefined}
+      onClick={canBuy && !isNsfwUpgrade && !isOverclockingUpgrade ? handleClick : undefined}
     >
       <div className="upgrade-card-content">
         <div className="flex items-center gap-2 mb-2">
           <h3 className="text-base font-bold text-neon-cyan">{upgrade.name}</h3>
           {currentLevel > 0 && (
             <span className="text-xs px-2 py-1 rounded bg-neon-purple/20 text-neon-purple">
-              Lv {currentLevel}
+              {levelLabel} {currentLevel}
             </span>
           )}
         </div>
@@ -348,21 +365,121 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
             // Check if this is an addictivity upgrade
             const isAddictivityUpgrade = UPGRADES.addictivity?.some(u => u.id === upgrade.id);
             
+            // Show Overclocking effects (percentage-based: each level = 10%)
+            if (isOverclockingUpgrade) {
+              const overclockPercentage = currentLevel * 10; // Each level = 10%
+              
+              // Get Energy Efficiency Research level to calculate improved ratios
+              const energyEfficiencyLevel = resources.upgradeLevels?.['energy-efficiency'] || 0;
+              const efficiencyBonus = energyEfficiencyLevel * 0.1; // 10% improvement per level
+              
+              // Base values: +20% SATS generation, +10% token consumption per 10% overclock
+              const baseSatsBonusPer10Percent = 20; // 20% base
+              const baseTokenPenaltyPer10Percent = 10; // 10% base
+              
+              // Improved ratios based on Energy Efficiency Research
+              const satsBonusPer10Percent = baseSatsBonusPer10Percent * (1 + efficiencyBonus); // Increases SATS bonus
+              const tokenPenaltyPer10Percent = baseTokenPenaltyPer10Percent * (1 - efficiencyBonus * 0.5); // Decreases token penalty (half effect)
+              
+              // Calculate current values based on overclock percentage
+              const currentSatsBonus = (overclockPercentage / 10) * satsBonusPer10Percent;
+              const currentTokenPenalty = (overclockPercentage / 10) * tokenPenaltyPer10Percent;
+              
+              return (
+                <div className="text-xs text-neon-green font-mono mb-3">
+                  {isToggled && currentLevel > 0 ? (
+                    <>
+                      <div>+{formatNumber(currentSatsBonus)}% Satoshis Generation ({overclockPercentage}% Overclock)</div>
+                      <div className="text-red-400">+{formatNumber(currentTokenPenalty)}% Token Consumption</div>
+                      {energyEfficiencyLevel > 0 && (
+                        <div className="text-gray-400 text-xs mt-1">Efficiency: {energyEfficiencyLevel} ({formatNumber(satsBonusPer10Percent)}% / {formatNumber(tokenPenaltyPer10Percent)}% per 10%)</div>
+                      )}
+                    </>
+                  ) : currentLevel > 0 ? (
+                    <>
+                      <div className="text-gray-500">+{formatNumber(currentSatsBonus)}% Satoshis Generation ({overclockPercentage}% Overclock, OFF)</div>
+                      <div className="text-gray-500">+{formatNumber(currentTokenPenalty)}% Token Consumption (OFF)</div>
+                      {energyEfficiencyLevel > 0 && (
+                        <div className="text-gray-400 text-xs mt-1">Efficiency: {energyEfficiencyLevel} ({formatNumber(satsBonusPer10Percent)}% / {formatNumber(tokenPenaltyPer10Percent)}% per 10%)</div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div>+{formatNumber(satsBonusPer10Percent)}% Satoshis Generation per 10% Overclock</div>
+                      <div className="text-red-400">+{formatNumber(tokenPenaltyPer10Percent)}% Token Consumption per 10% Overclock</div>
+                      <div className="text-gray-400 mt-1">Current: 0% Overclock</div>
+                      {energyEfficiencyLevel > 0 && (
+                        <div className="text-gray-400 text-xs mt-1">Energy Efficiency: {energyEfficiencyLevel} (Improved ratios)</div>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            }
+            
             // For addictivity upgrades, exclude tokensPerSec from gains (shown as cost instead)
             const hasGains = isAddictivityUpgrade
-              ? (upgrade.effect?.processingPowerPerSec || upgrade.effect?.electricityPerSec || upgrade.effect?.satoshisPerSec || upgrade.effect?.addictivityPerSec)
-              : (upgrade.effect?.tokensPerSec || upgrade.effect?.processingPowerPerSec || upgrade.effect?.electricityPerSec || upgrade.effect?.satoshisPerSec || upgrade.effect?.addictivityPerSec);
+              ? (upgrade.effect?.satoshisPerSec || upgrade.effect?.addictivityPerSec)
+              : (upgrade.effect?.tokensPerSec || upgrade.effect?.tokensPerClick || upgrade.effect?.satoshisPerSec || upgrade.effect?.addictivityPerSec || upgrade.effect?.electricity || upgrade.effect?.processingPower);
             
             return hasGains ? (
               <div className="text-xs text-neon-green font-mono mb-3">
-                {!isAddictivityUpgrade && upgrade.effect.tokensPerSec && (
-                  <div>+{formatNumber(upgrade.effect.tokensPerSec)} Tokens/sec</div>
+                {!isAddictivityUpgrade && upgrade.effect.tokensPerSec && (() => {
+                  // Special case: Overseas Clickfarm uses Optimize AI level as multiplier
+                  if (upgrade.id === 'indian-clickfarm') {
+                    const optimizeAILevel = resources.upgradeLevels?.['basic-algorithm'] || 0;
+                    // Apply stage/version multipliers to match actual generation
+                    const stageMultiplier = STAGES[resources.stage || 0]?.multiplier || 1;
+                    const [major, minor] = (resources.version || '0.1.0').split('.').map(Number);
+                    const versionMultiplier = Math.pow(VERSION_MULTIPLIERS.major, major) * 
+                                             Math.pow(VERSION_MULTIPLIERS.minor, minor);
+                    const totalMultiplier = stageMultiplier * versionMultiplier;
+                    // Per-level value with multipliers applied
+                    const perLevelValue = upgrade.effect.tokensPerSec * optimizeAILevel * totalMultiplier;
+                    const currentGeneration = perLevelValue * currentLevel;
+                    return (
+                      <div>
+                        +{formatNumber(perLevelValue)} Tokens/sec (Lv {optimizeAILevel})
+                        {currentLevel > 0 && <div className="text-gray-400">Currently: +{formatNumber(currentGeneration)} Tokens/sec</div>}
+                      </div>
+                    );
+                  }
+                  // Regular token upgrades also get multipliers
+                  const stageMultiplier = STAGES[resources.stage || 0]?.multiplier || 1;
+                  const [major, minor] = (resources.version || '0.1.0').split('.').map(Number);
+                  const versionMultiplier = Math.pow(VERSION_MULTIPLIERS.major, major) * 
+                                           Math.pow(VERSION_MULTIPLIERS.minor, minor);
+                  const totalMultiplier = stageMultiplier * versionMultiplier;
+                  const multipliedValue = upgrade.effect.tokensPerSec * totalMultiplier;
+                  return <div>+{formatNumber(multipliedValue)} Tokens/sec</div>;
+                })()}
+                {upgrade.effect.tokensPerClick && (() => {
+                  // Special case: Optimize AI shows per-level increase and current total
+                  if (upgrade.id === 'basic-algorithm') {
+                    // Apply stage/version multipliers to match actual click power calculation
+                    const stageMultiplier = STAGES[resources.stage || 0]?.multiplier || 1;
+                    const [major, minor] = (resources.version || '0.1.0').split('.').map(Number);
+                    const versionMultiplier = Math.pow(VERSION_MULTIPLIERS.major, major) * 
+                                             Math.pow(VERSION_MULTIPLIERS.minor, minor);
+                    const totalMultiplier = stageMultiplier * versionMultiplier;
+                    // Per-level value with multipliers applied
+                    const perLevelValue = upgrade.effect.tokensPerClick * totalMultiplier;
+                    const currentTotal = perLevelValue * currentLevel;
+                    return (
+                      <div>
+                        +{formatNumber(perLevelValue)} Tokens/click
+                        {currentLevel > 0 && <div className="text-gray-400">Currently: +{formatNumber(currentTotal)} Tokens/click</div>}
+                      </div>
+                    );
+                  }
+                  // For other upgrades with tokensPerClick, show base value
+                  return <div>+{formatNumber(upgrade.effect.tokensPerClick)} Tokens/click</div>;
+                })()}
+                {upgrade.effect.processingPower && (
+                  <div>+{formatNumber(upgrade.effect.processingPower)} FLOPS</div>
                 )}
-                {upgrade.effect.processingPowerPerSec && (
-                  <div>+{formatNumber(upgrade.effect.processingPowerPerSec)} FLOPS/sec</div>
-                )}
-                {upgrade.effect.electricityPerSec && (
-                  <div>+{formatElectricity(upgrade.effect.electricityPerSec)}/sec</div>
+                {upgrade.effect.electricity && (
+                  <div>+{formatElectricity(upgrade.effect.electricity)}</div>
                 )}
                 {upgrade.effect.satoshisPerSec && (() => {
                   // For addictivity upgrades, show post-multiplier SATS/sec per level
@@ -372,9 +489,46 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
                     const versionMultiplier = Math.pow(VERSION_MULTIPLIERS.major, major) * 
                                              Math.pow(VERSION_MULTIPLIERS.minor, minor);
                     const totalMultiplier = stageMultiplier * versionMultiplier;
-                    // Show value per level (what one level gives you), not total
-                    const postMultiplierValue = upgrade.effect.satoshisPerSec * totalMultiplier;
-                    return <div>+{formatBitcoin(postMultiplierValue)}/sec</div>;
+                    
+                    // Get overclock multiplier for SATS generation
+                    const overclockLevel = resources.upgradeLevels?.['overclocking'] || 0;
+                    const isOverclockToggled = resources.toggledUpgrades?.['overclocking'] !== false;
+                    const overclockPercentage = overclockLevel * 10;
+                    
+                    // Calculate overclock multiplier (same logic as calculations.js)
+                    const energyEfficiencyLevel = resources.upgradeLevels?.['energy-efficiency'] || 0;
+                    const efficiencyBonus = energyEfficiencyLevel * 0.1;
+                    const baseSatsBonusPer10Percent = 0.20;
+                    const satsBonusPer10Percent = baseSatsBonusPer10Percent * (1 + efficiencyBonus);
+                    
+                    const overclockAddictivityMultiplier = isOverclockToggled && overclockLevel > 0
+                      ? 1 + (overclockPercentage / 10 * satsBonusPer10Percent)
+                      : 1;
+                    
+                    // Show value per level with overclock multiplier applied
+                    const basePerLevel = upgrade.effect.satoshisPerSec * totalMultiplier;
+                    const perLevelWithOverclock = basePerLevel * overclockAddictivityMultiplier;
+                    const currentSatsPerSec = perLevelWithOverclock * currentLevel;
+                    
+                    return (
+                      <div>
+                        {overclockLevel > 0 && isOverclockToggled ? (
+                          <>
+                            <div>+{formatBitcoin(perLevelWithOverclock)}/sec <span className="text-neon-green">({formatNumber((overclockAddictivityMultiplier - 1) * 100)}% overclock)</span></div>
+                            {currentLevel > 0 && (
+                              <div className="text-gray-400">Currently: +{formatBitcoin(currentSatsPerSec)}/sec</div>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <div>+{formatBitcoin(basePerLevel)}/sec</div>
+                            {currentLevel > 0 && (
+                              <div className="text-gray-400">Currently: +{formatBitcoin(basePerLevel * currentLevel)}/sec</div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
                   }
                   // For other upgrades, show base value
                   return <div>+{formatBitcoin(upgrade.effect.satoshisPerSec)}/sec</div>;
@@ -385,16 +539,40 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
               </div>
             ) : null;
           })()}
-          {/* Display token cost for addictivity upgrades (FLAT - no multipliers) */}
+          {/* Display token cost for addictivity upgrades (with overclock multiplier) */}
           {(() => {
             const isAddictivityUpgrade = UPGRADES.addictivity?.some(u => u.id === upgrade.id);
             if (isAddictivityUpgrade && upgrade.effect?.tokensPerSec) {
-              // Token consumption is FLAT - show base value without multipliers
-              const flatValue = upgrade.effect.tokensPerSec * (resources.upgradeLevels?.[upgrade.id] || 0);
+              // Get overclock multiplier for token consumption
+              const overclockLevel = resources.upgradeLevels?.['overclocking'] || 0;
+              const isOverclockToggled = resources.toggledUpgrades?.['overclocking'] !== false;
+              const overclockPercentage = overclockLevel * 10;
+              
+              // Calculate overclock multiplier (same logic as calculations.js)
+              const energyEfficiencyLevel = resources.upgradeLevels?.['energy-efficiency'] || 0;
+              const efficiencyBonus = energyEfficiencyLevel * 0.1;
+              const baseTokenPenaltyPer10Percent = 0.10;
+              const tokenPenaltyPer10Percent = Math.max(0.001, baseTokenPenaltyPer10Percent * (1 - efficiencyBonus * 0.5));
+              
+              const overclockTokenConsumptionMultiplier = isOverclockToggled && overclockLevel > 0
+                ? 1 + (overclockPercentage / 10 * tokenPenaltyPer10Percent)
+                : 1;
+              
+              // Show per-level value and current total with overclock multiplier
+              const perLevelCost = upgrade.effect.tokensPerSec;
+              const currentCost = perLevelCost * currentLevel * overclockTokenConsumptionMultiplier;
               
               return (
                 <div className="text-xs text-red-400 font-mono mb-3">
-                  <div>-{formatNumber(flatValue)} Tokens/sec</div>
+                  <div>-{formatNumber(perLevelCost)} Tokens/sec</div>
+                  {currentLevel > 0 && (
+                    <div className="text-gray-400">
+                      Currently: -{formatNumber(currentCost)} Tokens/sec
+                      {overclockLevel > 0 && isOverclockToggled && (
+                        <span className="text-red-300"> ({formatNumber((overclockTokenConsumptionMultiplier - 1) * 100)}% from overclock)</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             }
@@ -535,9 +713,9 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
                     <div className="flex flex-col">
                       <div className="text-[9px] text-gray-400 leading-tight">Requires</div>
                       <span className={`text-xs font-semibold font-mono leading-tight whitespace-nowrap ${
-                        excessProcessingPower >= upgrade.requiresProcessingPower ? 'text-purple-300' : 'text-red-400'
+                        (resources.processingPower || 0) >= upgrade.requiresProcessingPower ? 'text-purple-300' : 'text-red-400'
                       }`}>
-                        {upgrade.requiresProcessingPower} FLOPS/s
+                        {upgrade.requiresProcessingPower} FLOPS
                       </span>
                     </div>
                   </div>
@@ -610,8 +788,8 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
           </div>
         )}
         
-        {/* NSFW Upgrade: Quantity Controls + Toggle */}
-        {isNsfwUpgrade ? (
+        {/* NSFW Upgrade or Overclocking: Quantity Controls + Max Button + Toggle */}
+        {(isNsfwUpgrade || isOverclockingUpgrade) ? (
           <div className="flex items-center gap-2 w-full" style={{ flexWrap: 'nowrap' }}>
             <button
               onClick={handleDecrease}
@@ -621,7 +799,7 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
               disabled={currentLevel === 0}
               className={`cyberpunk-button-small cyberpunk-button-decrease ${isGlowingDecrease ? 'cyberpunk-button-holding' : ''}`}
               style={{ flexShrink: 0 }}
-              title="Decrease level (hold to repeat)"
+              title={`Decrease ${levelLabelFull.toLowerCase()} (hold to repeat)`}
             >
               <span className="terminal-text">-</span>
               {isGlowingDecrease && (
@@ -629,7 +807,11 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
               )}
             </button>
             <div className="text-center px-3 py-2 rounded bg-gray-800/50 border border-neon-cyan/30 min-w-[60px]" style={{ flexShrink: 0 }}>
-              <span className="text-neon-cyan font-mono font-bold terminal-text">{currentLevel}</span>
+              {isOverclockingUpgrade ? (
+                <span className="text-neon-cyan font-mono font-bold terminal-text">{currentLevel * 10}%</span>
+              ) : (
+                <span className="text-neon-cyan font-mono font-bold terminal-text">{currentLevel}</span>
+              )}
             </div>
             <button
               onClick={handleIncrease}
@@ -639,13 +821,24 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
               disabled={!canBuy}
               className={`cyberpunk-button-small cyberpunk-button-increase ${isGlowingIncrease ? 'cyberpunk-button-holding' : ''}`}
               style={{ flexShrink: 0 }}
-              title="Increase level (hold to repeat)"
+              title={`Increase ${levelLabelFull.toLowerCase()} (hold to repeat)`}
             >
               <span className="terminal-text">+</span>
               {isGlowingIncrease && (
                 <div className="cyberpunk-button-glow cyberpunk-button-glow-increase"></div>
               )}
             </button>
+            {!isOverclockingUpgrade && (
+              <button
+                onClick={handleMax}
+                disabled={!canBuy || currentLevel >= maxLevel}
+                className="cyberpunk-button-small cyberpunk-button-max"
+                style={{ flexShrink: 0 }}
+                title={`Buy up to ${levelLabelFull.toLowerCase()} ${maxLevel === Infinity ? 'max' : maxLevel}`}
+              >
+                <span className="terminal-text">MAX</span>
+              </button>
+            )}
             
             {/* Toggle Switch - Show if level > 0 and onToggle exists */}
             {currentLevel > 0 && onToggle ? (
@@ -672,14 +865,17 @@ export function UpgradeCard({ upgrade, level, resources, onPurchase, disabled, o
           /* Regular Upgrade: Cyberpunk Buy Button + Toggle (if toggleable) */
           <div className="flex items-center gap-2 w-full">
             <button
-              onClick={handleClick}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleClick(e);
+              }}
               disabled={!canBuy}
               className={`cyberpunk-buy-button flex-1 ${canBuy ? 'cyberpunk-buy-button-active' : 'cyberpunk-buy-button-disabled'}`}
             >
               <div className="cyberpunk-buy-button-content">
                 <span className="terminal-text">[PURCHASE]</span>
                 {currentLevel > 0 && (
-                  <span className="cyberpunk-buy-button-level">Lv {currentLevel + 1}</span>
+                  <span className="cyberpunk-buy-button-level">{levelLabel} {currentLevel + 1}</span>
                 )}
               </div>
               {canBuy && (

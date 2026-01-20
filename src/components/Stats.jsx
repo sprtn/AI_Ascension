@@ -34,14 +34,6 @@ export function Stats({ gameState }) {
             <span className="text-neon-cyan font-mono">{formatNumber(generation.tokens)}/s</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-400">Processing Power:</span>
-            <span className="text-neon-purple font-mono">{formatNumber(generation.processingPower)}/s</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Electricity:</span>
-            <span className="text-neon-green font-mono">{formatNumber(generation.electricity)}/s</span>
-          </div>
-          <div className="flex justify-between">
             <span className="text-gray-400">Storage:</span>
             <span className="text-neon-cyan font-mono">Capacity: {formatNumber(gameState.state.storage)}</span>
           </div>

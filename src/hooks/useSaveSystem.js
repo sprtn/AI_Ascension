@@ -84,16 +84,12 @@ export function useSaveSystem(gameState, gameActions) {
         
         const offlineEarnings = {
           tokens: generation.tokens * effectiveTime,
-          processingPower: generation.processingPower * effectiveTime,
-          electricity: generation.electricity * effectiveTime,
           storage: (generation.storage || 0) * effectiveTime,
           addictivity: generation.addictivity * effectiveTime,
         };
         
         // Add offline earnings to saved state
         saveData.state.tokens += offlineEarnings.tokens;
-        saveData.state.processingPower += offlineEarnings.processingPower;
-        saveData.state.electricity += offlineEarnings.electricity;
         saveData.state.storage += offlineEarnings.storage;
         saveData.state.addictivity += offlineEarnings.addictivity;
         saveData.state.totalTokensGenerated += offlineEarnings.tokens;

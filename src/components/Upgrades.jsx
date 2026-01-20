@@ -100,6 +100,16 @@ export function Upgrades({ gameState, gameActions }) {
           gameActions.addResources({ storage: effect.storage });
         }
         
+        // Handle electricity upgrades (add electricity directly)
+        if (effect && effect.electricity) {
+          gameActions.addResources({ electricity: effect.electricity });
+        }
+        
+        // Handle processingPower upgrades (add processingPower directly)
+        if (effect && effect.processingPower) {
+          gameActions.addResources({ processingPower: effect.processingPower });
+        }
+        
         // Auto-enable token to SATS conversion on first purchase
         if (effect && effect.tokenToSatsConversion && newLevel === 1) {
           // Default to enabled (toggledUpgrades[upgradeId] will be undefined, which we treat as true)

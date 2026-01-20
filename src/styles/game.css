@@ -725,6 +725,45 @@
   opacity: 0;
 }
 
+.achievement-toast-glitch-effect {
+  animation: achievement-toast-glitch-animation 2s ease-in-out;
+  border-color: rgba(255, 0, 0, 0.8) !important;
+  box-shadow: 0 0 30px rgba(255, 0, 0, 0.6) !important;
+}
+
+@keyframes achievement-toast-glitch-animation {
+  0%, 100% {
+    transform: translateX(0);
+    filter: hue-rotate(0deg);
+  }
+  10% {
+    transform: translateX(-3px) translateY(2px);
+    filter: hue-rotate(90deg);
+  }
+  20% {
+    transform: translateX(3px) translateY(-2px);
+    filter: hue-rotate(180deg);
+  }
+  30% {
+    transform: translateX(-2px) translateY(1px);
+    filter: hue-rotate(270deg);
+  }
+  40% {
+    transform: translateX(2px) translateY(-1px);
+    filter: hue-rotate(360deg);
+  }
+  50% {
+    transform: translateX(-1px);
+    filter: hue-rotate(0deg);
+  }
+  60% {
+    transform: translateX(1px);
+  }
+  70%, 100% {
+    transform: translateX(0);
+  }
+}
+
 .achievement-toast-content {
   display: flex;
   align-items: flex-start;
@@ -973,6 +1012,26 @@
 }
 
 .cyberpunk-button-increase:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.cyberpunk-button-max {
+  background: rgba(255, 215, 0, 0.1);
+  border-color: rgba(255, 215, 0, 0.4);
+  color: #ffd700;
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.6);
+  font-size: 13px;
+}
+
+.cyberpunk-button-max:hover:not(:disabled) {
+  background: rgba(255, 215, 0, 0.2);
+  border-color: rgba(255, 215, 0, 0.6);
+  box-shadow: 0 0 12px rgba(255, 215, 0, 0.4);
+  transform: scale(1.05);
+}
+
+.cyberpunk-button-max:disabled {
   opacity: 0.3;
   cursor: not-allowed;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { calculateGeneration, calculateClickPower, calculateElectricityConsumption, calculateProcessingPowerConsumption, calculateNSFWDrain } from '../utils/calculations.js';
+import { calculateGeneration, calculateClickPower, calculateNSFWDrain } from '../utils/calculations.js';
 import { STAGE_REQUIREMENTS, UPGRADES, STAGES, VERSION_MULTIPLIERS } from '../utils/constants.js';
 
 const TICK_INTERVAL = 1000 / 60; // 60 FPS
@@ -41,15 +41,6 @@ export function useGameLoop(gameState, gameActions) {
           currentState.stage,
           currentState.version,
           currentState.toggledUpgrades || {}
-        );
-        
-        // Calculate consumption
-        const electricityConsumption = calculateElectricityConsumption(
-          currentState.upgradeLevels,
-          currentState.toggledUpgrades || {}
-        );
-        const processingPowerConsumption = calculateProcessingPowerConsumption(
-          currentState.upgradeLevels
         );
         
         // Apply active event multipliers
@@ -97,21 +88,17 @@ export function useGameLoop(gameState, gameActions) {
         const tokenGenerationWithMultipliers = baseTokenGeneration * safeTotalMultiplier * safeProductionMultiplier;
         const tokenConsumptionFlat = baseTokenConsumption; // Flat - no multipliers applied
         
-        // Validate final result
+        // Calculate NET token rate BEFORE NSFW drain is applied
+        // NSFW drain will be applied separately in the resource update section
         generation.tokens = isNaN(tokenGenerationWithMultipliers - tokenConsumptionFlat) 
           ? 0 
           : tokenGenerationWithMultipliers - tokenConsumptionFlat;
         
         // Validate and apply multipliers to other resources
-        
-        generation.processingPower = (generation.processingPower || 0) * safeProductionMultiplier;
-        generation.electricity = (generation.electricity || 0) * safeProductionMultiplier;
         generation.addictivity = (generation.addictivity || 0) * safeAddictivityMultiplier;
         
         // Validate all generation values
         generation.tokens = isNaN(generation.tokens) || !isFinite(generation.tokens) ? 0 : generation.tokens;
-        generation.processingPower = isNaN(generation.processingPower) || !isFinite(generation.processingPower) ? 0 : generation.processingPower;
-        generation.electricity = isNaN(generation.electricity) || !isFinite(generation.electricity) ? 0 : generation.electricity;
         generation.addictivity = isNaN(generation.addictivity) || !isFinite(generation.addictivity) ? 0 : generation.addictivity;
         generation.satoshis = isNaN(generation.satoshis) || !isFinite(generation.satoshis) ? 0 : generation.satoshis;
         
@@ -129,11 +116,6 @@ export function useGameLoop(gameState, gameActions) {
             version: currentState.version
           });
         }
-        
-        // Calculate excess values (generation - consumption)
-        // Processing Power and Electricity show excess only, not accumulated
-        const excessProcessingPower = Math.max(0, generation.processingPower - processingPowerConsumption);
-        const excessElectricity = Math.max(0, generation.electricity - electricityConsumption);
         
         // Calculate token to SATS conversion drain BEFORE updating resources
         const toggledUpgrades = currentState.toggledUpgrades || {};
@@ -157,6 +139,7 @@ export function useGameLoop(gameState, gameActions) {
         const safeNsfwSatsPerSec = isNaN(nsfwDrain.satsPerSec) || !isFinite(nsfwDrain.satsPerSec) ? 0 : nsfwDrain.satsPerSec;
         
         // Apply multipliers to NSFW drain (all values should reflect post-multiplier values)
+        // NSFW drain is FLAT - not affected by stage/version multipliers
         const totalTokenDrainPerSec = safeNsfwTokenDrain * safeProductionMultiplier;
         const totalSatsPerSec = safeNsfwSatsPerSec * safeProductionMultiplier;
         
@@ -210,28 +193,33 @@ export function useGameLoop(gameState, gameActions) {
           const safeSatoshisPerSec = isNaN(generation.satoshis) || !isFinite(generation.satoshis) ? 0 : generation.satoshis;
           const safeAddictivityPerSec = isNaN(generation.addictivity) || !isFinite(generation.addictivity) ? 0 : generation.addictivity;
           
-          const tokenChange = tokensGenerated - (totalTokenDrainPerSec > 0 ? tokenDrainThisTick : 0);
-          const satsChange = safeSatoshisPerSec * seconds + (totalTokenDrainPerSec > 0 ? totalSatsPerSec * seconds : 0);
+          // Calculate net token change: generation - consumption - NSFW drain
+          // generation.tokens already has (tokenGeneration * multipliers) - tokenConsumption applied
+          // We still need to apply the NSFW drain
+          const tokenGenerationThisTick = safeTokensPerSec * seconds;
+          const nsfwDrainThisTick = totalTokenDrainPerSec * seconds;
+          const netTokenChange = tokenGenerationThisTick - nsfwDrainThisTick;
           
           // Final validation before adding resources
-          const safeTokenChange = isNaN(tokenChange) || !isFinite(tokenChange) ? 0 : tokenChange;
-          const safeSatsChange = isNaN(satsChange) || !isFinite(satsChange) ? 0 : satsChange;
-          const safeAddictivityChange = safeAddictivityPerSec * seconds;
-          const safeTotalTokensGenerated = safeTokensPerSec * seconds;
+          const safeTokenChange = isNaN(netTokenChange) || !isFinite(netTokenChange) ? 0 : netTokenChange;
+          const safeSatsChange = isNaN(safeSatoshisPerSec * seconds) || !isFinite(safeSatoshisPerSec * seconds) ? 0 : safeSatoshisPerSec * seconds;
+          const safeAddictivityChange = isNaN(safeAddictivityPerSec * seconds) || !isFinite(safeAddictivityPerSec * seconds) ? 0 : safeAddictivityPerSec * seconds;
+          const safeTotalTokensGenerated = isNaN(safeTokensPerSec * seconds) || !isFinite(safeTokensPerSec * seconds) ? 0 : safeTokensPerSec * seconds;
           
+          // Add NSFW conversion to satoshis
+          const nsfwSatsThisTick = totalSatsPerSec * seconds;
+          const totalSatsChange = safeSatsChange + (totalTokenDrainPerSec > 0 ? nsfwSatsThisTick : 0);
+          const safeTotalSatsChange = isNaN(totalSatsChange) || !isFinite(totalSatsChange) ? 0 : totalSatsChange;
+          
+          // Add generated resources (
+          // These now accumulate like other resources instead of being reset
           gameActionsRef.current.addResources({
             tokens: safeTokenChange,
             addictivity: safeAddictivityChange,
-            satoshis: safeSatsChange,
-            totalTokensGenerated: safeTotalTokensGenerated,
+            satoshis: safeTotalSatsChange,
+            totalTokensGenerated: safeTotalTokensGenerated
           });
         }
-        
-        // Set Processing Power and Electricity to excess values (not accumulated)
-        gameActionsRef.current.updateResources({
-          processingPower: excessProcessingPower,
-          electricity: excessElectricity,
-        });
         
         // Check stage progression (use functional update to get latest state)
         if (currentState.stage < 15) {
@@ -254,8 +242,7 @@ export function useGameLoop(gameState, gameActions) {
       }
       
       // Update play time once per frame (not per processed interval)
-      const currentState = gameStateRef.current;
-      const playTime = (now - currentState.startTime) / 1000;
+      const playTime = (Date.now() - gameStateRef.current.startTime) / 1000;
       gameActionsRef.current.updatePlayTime(playTime);
       
       requestAnimationFrame(tick);
@@ -270,5 +257,5 @@ export function useGameLoop(gameState, gameActions) {
       cancelAnimationFrame(animationId);
       console.log('Game loop stopped');
     };
-  }, []); // Empty dependency array - effect only runs once
+  }, []);
 }

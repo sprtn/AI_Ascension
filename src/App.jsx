@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useGameState } from './hooks/useGameState.js';
 import { useGameLoop } from './hooks/useGameLoop.js';
 import { useSaveSystem } from './hooks/useSaveSystem.js';
@@ -9,7 +9,9 @@ import { Stats } from './components/Stats.jsx';
 import { Prestige } from './components/Prestige.jsx';
 import { AnimatedBackground } from './components/AnimatedBackground.jsx';
 import { AchievementToastContainer } from './components/AchievementToast.jsx';
+import { ResourceBurst } from './components/ResourceBurst.jsx';
 import { EVENTS, ACHIEVEMENTS } from './utils/constants.js';
+import { compareVersions } from './utils/formatters.js';
 import './styles/game.css';
 
 const TOP_BUTTONS = [
@@ -23,14 +25,90 @@ function App() {
   const [showSaveMenu, setShowSaveMenu] = useState(false);
   const [saveExportText, setSaveExportText] = useState('');
   const [saveImportText, setSaveImportText] = useState('');
+  const [resourceBursts, setResourceBursts] = useState([]);
+  const resourceRefs = useRef(null);
   
   const gameState = useGameState();
+  
+  // Wrapper for applyAchievementReward that triggers visual bursts
+  const applyAchievementRewardWithBurst = (achievementId) => {
+    const achievement = ACHIEVEMENTS.find(a => a.id === achievementId);
+    if (!achievement || !achievement.reward) return;
+    
+    // Trigger visual bursts for each resource
+    const reward = achievement.reward;
+    const burstAmounts = {};
+    const resourcePositions = {};
+    
+    // Get positions for each resource that has a reward
+    if (reward.tokens && resourceRefs.current?.tokens?.current) {
+      const pos = resourceRefs.current.tokens.current.getPosition();
+      if (pos) {
+        burstAmounts.tokens = reward.tokens;
+        resourcePositions.tokens = pos;
+      }
+    }
+    if (reward.satoshis && resourceRefs.current?.satoshis?.current) {
+      const pos = resourceRefs.current.satoshis.current.getPosition();
+      if (pos) {
+        burstAmounts.satoshis = reward.satoshis;
+        resourcePositions.satoshis = pos;
+      }
+    }
+    if (reward.processingPower && resourceRefs.current?.processingPower?.current) {
+      const pos = resourceRefs.current.processingPower.current.getPosition();
+      if (pos) {
+        burstAmounts.processingPower = reward.processingPower;
+        resourcePositions.processingPower = pos;
+      }
+    }
+    if (reward.electricity && resourceRefs.current?.electricity?.current) {
+      const pos = resourceRefs.current.electricity.current.getPosition();
+      if (pos) {
+        burstAmounts.electricity = reward.electricity;
+        resourcePositions.electricity = pos;
+      }
+    }
+    if (reward.storage && resourceRefs.current?.storage?.current) {
+      const pos = resourceRefs.current.storage.current.getPosition();
+      if (pos) {
+        burstAmounts.storage = reward.storage;
+        resourcePositions.storage = pos;
+      }
+    }
+    if (reward.addictivity && resourceRefs.current?.addictivity?.current) {
+      const pos = resourceRefs.current.addictivity.current.getPosition();
+      if (pos) {
+        burstAmounts.addictivity = reward.addictivity;
+        resourcePositions.addictivity = pos;
+      }
+    }
+    
+    // Add burst effects positioned over their resource cards
+    for (const [resource, amount] of Object.entries(burstAmounts)) {
+      const position = resourcePositions[resource];
+      if (position) {
+        setResourceBursts(prev => [...prev, { 
+          id: `${Date.now()}-${resource}`, 
+          amounts: { [resource]: amount },
+          position: position
+        }]);
+      }
+    }
+    
+    // Apply reward with progress callback for smooth animation
+    gameState.applyAchievementReward(achievementId, (stepAmounts, progress) => {
+      // Update bursts during animation if needed
+    });
+  };
+  
   const gameActions = {
     updateResources: gameState.updateResources,
     addResources: gameState.addResources,
     spendResources: gameState.spendResources,
     purchaseUpgrade: gameState.purchaseUpgrade,
     unlockAchievement: gameState.unlockAchievement,
+    applyAchievementReward: applyAchievementRewardWithBurst,
     advanceStage: gameState.advanceStage,
     prestige: gameState.prestige,
     addClick: gameState.addClick,
@@ -110,6 +188,68 @@ function App() {
   
   const tokensZero = gameState.state.tokensHitZero || false;
   
+  // Check for new achievements (regardless of tab)
+  useEffect(() => {
+    for (const achievement of ACHIEVEMENTS) {
+      if (gameState.state.achievements.includes(achievement.id)) {
+        continue; // Already unlocked
+      }
+      
+      let unlocked = false;
+      
+      if (achievement.requirement.tokens) {
+        unlocked = gameState.state.tokens >= achievement.requirement.tokens;
+      } else if (achievement.requirement.processingPower) {
+        unlocked = gameState.state.processingPower >= achievement.requirement.processingPower;
+      } else if (achievement.requirement.electricity) {
+        unlocked = gameState.state.electricity >= achievement.requirement.electricity;
+      } else if (achievement.requirement.storage) {
+        unlocked = gameState.state.storage >= achievement.requirement.storage;
+      } else if (achievement.requirement.addictivity) {
+        unlocked = gameState.state.addictivity >= achievement.requirement.addictivity;
+      } else if (achievement.requirement.stage !== undefined) {
+        unlocked = gameState.state.stage >= achievement.requirement.stage;
+      } else if (achievement.requirement.version) {
+        unlocked = compareVersions(gameState.state.version, achievement.requirement.version) >= 0;
+      } else if (achievement.requirement.clicks) {
+        unlocked = gameState.state.totalClicks >= achievement.requirement.clicks;
+      } else if (achievement.requirement.clicksIn10Sec) {
+        // Count clicks in last 10 seconds
+        const now = Date.now();
+        const tenSecondsAgo = now - 10000;
+        const recentClicks = (gameState.state.clickTimestamps || []).filter(timestamp => timestamp > tenSecondsAgo);
+        unlocked = recentClicks.length >= achievement.requirement.clicksIn10Sec;
+      } else if (achievement.requirement.playTime) {
+        unlocked = gameState.state.playTime >= achievement.requirement.playTime;
+      } else if (achievement.requirement.upgrade) {
+        unlocked = (gameState.state.upgradeLevels[achievement.requirement.upgrade] || 0) > 0;
+      } else if (achievement.requirement.upgrades) {
+        unlocked = Object.keys(gameState.state.upgradeLevels).length >= achievement.requirement.upgrades;
+      } else if (achievement.requirement.upgradeAmount) {
+        // Check if player has specific amounts of upgrades (for inventory achievements)
+        unlocked = Object.entries(achievement.requirement.upgradeAmount).every(([upgradeId, requiredAmount]) => {
+          return (gameState.state.upgradeLevels[upgradeId] || 0) >= requiredAmount;
+        });
+      } else if (achievement.requirement.upgradeLevel) {
+        // Check if upgrade is at specific level (for Optimize AI level 50)
+        unlocked = Object.entries(achievement.requirement.upgradeLevel).every(([upgradeId, requiredLevel]) => {
+          return (gameState.state.upgradeLevels[upgradeId] || 0) >= requiredLevel;
+        });
+      }
+      
+      // Handle glitch achievement special effect
+      if (unlocked && achievement.glitch) {
+        // Trigger glitch animation - we'll handle this in the achievement unlock
+        // The glitch effect will be shown via the toast system
+      }
+      
+      if (unlocked) {
+        gameActions.unlockAchievement(achievement.id);
+        break; // Only unlock one at a time
+      }
+    }
+  }, [gameState.state, gameActions]);
+  
   // Get unlocked achievements for toast notifications
   const unlockedAchievements = ACHIEVEMENTS.filter(a => 
     gameState.state.achievements.includes(a.id)
@@ -131,7 +271,15 @@ function App() {
       <AnimatedBackground gameState={gameState} />
       
       {/* Achievement Toast Notifications */}
-      <AchievementToastContainer achievements={unlockedAchievements} />
+      <AchievementToastContainer 
+        achievements={unlockedAchievements} 
+        onRewardApply={gameActions.applyAchievementReward}
+      />
+      
+      {/* Resource Burst Effects */}
+      {resourceBursts.map(burst => (
+        <ResourceBurst key={burst.id} amounts={burst.amounts} position={burst.position} />
+      ))}
       
       <div className="container mx-auto px-4 pt-4 pb-4 max-w-7xl relative" style={{ zIndex: 10, position: 'relative' }}>
         {/* Header */}
@@ -216,6 +364,7 @@ function App() {
           <OverviewBar 
             gameState={gameState} 
             gameActions={gameActions}
+            resourceRefs={resourceRefs}
             onResourceClick={(category) => {
               setActiveTab('upgrades');
               // Trigger category change in Upgrades component

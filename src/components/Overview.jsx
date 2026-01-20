@@ -15,6 +15,7 @@ export function Overview({ gameState, gameActions }) {
     gameState.state.version
   );
   
+  
   const currentStage = STAGES[gameState.state.stage];
   const nextStage = STAGES[gameState.state.stage + 1];
   const stageRequirements = STAGE_REQUIREMENTS[gameState.state.stage + 1] || {};
@@ -82,6 +83,7 @@ export function Overview({ gameState, gameActions }) {
           value={gameState.state.electricity}
           icon="⚡"
           color="neon-green"
+          isElectricity={true}
         />
         <ResourceDisplay
           label="Storage"

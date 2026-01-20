@@ -2,9 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { formatNumber, formatBitcoin, formatStorage, formatElectricity } from '../utils/formatters.js';
 import { UPGRADES } from '../utils/constants.js';
 
-export function AchievementToast({ achievement, onDismiss, index = 0 }) {
+export function AchievementToast({ achievement, onDismiss, index = 0, onRewardApply }) {
   const [isVisible, setIsVisible] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
+  const [rewardApplied, setRewardApplied] = useState(false);
   
   useEffect(() => {
     // Slide in
@@ -14,14 +15,24 @@ export function AchievementToast({ achievement, onDismiss, index = 0 }) {
     const timer = setTimeout(() => {
       setIsExiting(true);
       setTimeout(() => {
+        // Apply reward before dismissing if not already applied
+        if (!rewardApplied && achievement?.reward && onRewardApply) {
+          onRewardApply(achievement.id);
+          setRewardApplied(true);
+        }
         if (onDismiss) onDismiss();
       }, 300);
     }, 6000);
     
     return () => clearTimeout(timer);
-  }, [onDismiss]);
+  }, [onDismiss, rewardApplied, achievement, onRewardApply]);
   
   const handleClick = () => {
+    // Apply reward immediately when clicked (before dismissing)
+    if (!rewardApplied && achievement?.reward && onRewardApply) {
+      onRewardApply(achievement.id);
+      setRewardApplied(true);
+    }
     setIsExiting(true);
     setTimeout(() => {
       if (onDismiss) onDismiss();
@@ -32,7 +43,7 @@ export function AchievementToast({ achievement, onDismiss, index = 0 }) {
   
   return (
     <div
-      className={`achievement-toast ${isVisible && !isExiting ? 'achievement-toast-visible' : 'achievement-toast-exiting'}`}
+      className={`achievement-toast ${isVisible && !isExiting ? 'achievement-toast-visible' : 'achievement-toast-exiting'} ${achievement.glitch ? 'achievement-toast-glitch-effect' : ''}`}
       style={{ bottom: `${20 + index * 90}px` }}
       onClick={handleClick}
       role="button"
@@ -45,7 +56,7 @@ export function AchievementToast({ achievement, onDismiss, index = 0 }) {
       }}
     >
       <div className="achievement-toast-content">
-        <div className="achievement-toast-icon">🏆</div>
+        <div className="achievement-toast-icon">{achievement.glitch ? '⚠️' : '🏆'}</div>
         <div className="achievement-toast-text">
           <div className="achievement-toast-name">{achievement.name}</div>
           <div className="achievement-toast-description">{achievement.description}</div>
@@ -78,7 +89,7 @@ export function AchievementToast({ achievement, onDismiss, index = 0 }) {
   );
 }
 
-export function AchievementToastContainer({ achievements }) {
+export function AchievementToastContainer({ achievements, onRewardApply }) {
   const [activeToasts, setActiveToasts] = useState([]);
   // Track which achievement IDs we've already shown to avoid duplicates
   const shownAchievementIdsRef = useRef(new Set());
@@ -137,6 +148,7 @@ export function AchievementToastContainer({ achievements }) {
           achievement={achievement}
           index={activeToasts.length - 1 - index}
           onDismiss={() => handleDismiss(achievement.id)}
+          onRewardApply={onRewardApply}
         />
       ))}
     </div>

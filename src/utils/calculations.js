@@ -74,8 +74,6 @@ export function canAfford(resources, cost) {
 export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrades = {}) {
   const generation = {
     tokens: 0,
-    processingPower: 0,
-    electricity: 0,
     storage: 0,
     addictivity: 0,
     satoshis: 0,
@@ -95,6 +93,34 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
   
   const totalMultiplier = stageMultiplier * versionMultiplier;
   
+  // Calculate Overclocking multiplier (if toggled on)
+  // Initialize these variables at the start to ensure they're always defined
+  const overclockLevel = upgradeLevels['overclocking'] || 0;
+  const isOverclockToggled = toggledUpgrades['overclocking'] !== false; // Default to true
+  const overclockPercentage = overclockLevel * 10; // Each level = 10%
+  
+  // Get Energy Efficiency Research level to improve overclocking ratios
+  const energyEfficiencyLevel = upgradeLevels['energy-efficiency'] || 0;
+  const efficiencyBonus = energyEfficiencyLevel * 0.1; // 10% improvement per level
+  
+  // Base values: +20% SATS generation, +10% token consumption per 10% overclock
+  // Energy Efficiency increases SATS bonus and decreases token consumption penalty
+  const baseSatsBonusPer10Percent = 0.20; // 20% base per 10% overclock
+  const baseTokenPenaltyPer10Percent = 0.10; // 10% base per 10% overclock
+  
+  // Improved ratios based on Energy Efficiency Research
+  // Efficiency bonus increases SATS generation bonus and decreases token consumption penalty
+  const satsBonusPer10Percent = baseSatsBonusPer10Percent * (1 + efficiencyBonus); // Increases SATS bonus
+  const tokenPenaltyPer10Percent = Math.max(0.001, baseTokenPenaltyPer10Percent * (1 - efficiencyBonus * 0.5)); // Decreases token penalty (half effect), minimum 0.1%
+  
+  // Calculate multipliers: each 10% overclock gives the improved percentage
+  const overclockAddictivityMultiplier = isOverclockToggled && overclockLevel > 0
+    ? 1 + (overclockPercentage / 10 * satsBonusPer10Percent) // Apply improved SATS bonus
+    : 1;
+  const overclockTokenConsumptionMultiplier = isOverclockToggled && overclockLevel > 0
+    ? 1 + (overclockPercentage / 10 * tokenPenaltyPer10Percent) // Apply improved token penalty
+    : 1;
+  
   // Count GPT Mini, GPT Pro, and Neural Networks models consumed by addictivity upgrades
   let gptMiniConsumed = 0;
   let gptProConsumed = 0;
@@ -109,25 +135,28 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
       // Calculate effect per level
       if (upgrade.effect.tokensPerSec) {
         // For addictivity upgrades, tokensPerSec is a cost (subtract tokens)
-        // Token cost for addictivity upgrades is fixed - NOT affected by multipliers
+        // Token cost for addictivity upgrades is affected by overclocking multiplier
         // For other upgrades, tokensPerSec is a gain (add tokens)
         if (category === 'addictivity') {
-          tokenConsumption += upgrade.effect.tokensPerSec * level;
+          tokenConsumption += upgrade.effect.tokensPerSec * level * overclockTokenConsumptionMultiplier;
         } else {
-          tokenGeneration += upgrade.effect.tokensPerSec * level;
+          // Special case: Overseas Clickfarm uses Optimize AI level as multiplier
+          if (upgrade.id === 'indian-clickfarm') {
+            const optimizeAILevel = upgradeLevels['basic-algorithm'] || 0;
+            tokenGeneration += upgrade.effect.tokensPerSec * level * optimizeAILevel;
+          } else {
+            tokenGeneration += upgrade.effect.tokensPerSec * level;
+          }
         }
-      }
-      if (upgrade.effect.processingPowerPerSec) {
-        generation.processingPower += upgrade.effect.processingPowerPerSec * level * totalMultiplier;
-      }
-      if (upgrade.effect.electricityPerSec) {
-        generation.electricity += upgrade.effect.electricityPerSec * level * totalMultiplier;
       }
       if (upgrade.effect.addictivityPerSec) {
         generation.addictivity += upgrade.effect.addictivityPerSec * level * totalMultiplier;
       }
       if (upgrade.effect.satoshisPerSec) {
-        generation.satoshis += upgrade.effect.satoshisPerSec * level * totalMultiplier;
+        // Apply overclocking multiplier to addictivity upgrades' SATS generation
+        const isAddictivityUpgrade = category === 'addictivity';
+        const satoshisMultiplier = isAddictivityUpgrade ? overclockAddictivityMultiplier : 1;
+        generation.satoshis += upgrade.effect.satoshisPerSec * level * totalMultiplier * satoshisMultiplier;
       }
       
       // For addictivity category: sum all SATS/sec values to show as Addictivity
@@ -145,7 +174,8 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
           }
         } else if (upgrade.effect.satoshisPerSec) {
           // All other addictivity upgrades contribute their SATS/sec to addictivity display
-          generation.addictivity += upgrade.effect.satoshisPerSec * level * totalMultiplier;
+          // Apply overclocking multiplier to addictivity generation
+          generation.addictivity += upgrade.effect.satoshisPerSec * level * totalMultiplier * overclockAddictivityMultiplier;
         }
       }
       
@@ -170,9 +200,6 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
         : true; // Not toggleable, so always "on"
       
       if (isToggledOn) {
-        if (upgrade.effect.processingPowerMultiplier) {
-          generation.processingPower *= Math.pow(upgrade.effect.processingPowerMultiplier, level);
-        }
         if (upgrade.effect.electricityCostMultiplier) {
           // This affects costs, not generation directly
         }
@@ -207,8 +234,6 @@ export function calculateGeneration(upgradeLevels, stage, version, toggledUpgrad
   generation.tokens = isNaN(netTokens) || !isFinite(netTokens) ? 0 : netTokens;
   
   // Validate all other generation values
-  generation.processingPower = isNaN(generation.processingPower) || !isFinite(generation.processingPower) ? 0 : generation.processingPower;
-  generation.electricity = isNaN(generation.electricity) || !isFinite(generation.electricity) ? 0 : generation.electricity;
   generation.storage = isNaN(generation.storage) || !isFinite(generation.storage) ? 0 : generation.storage;
   generation.addictivity = isNaN(generation.addictivity) || !isFinite(generation.addictivity) ? 0 : generation.addictivity;
   generation.satoshis = isNaN(generation.satoshis) || !isFinite(generation.satoshis) ? 0 : generation.satoshis;
@@ -249,77 +274,7 @@ export function calculateClickPower(upgradeLevels, stage, version) {
   return Math.floor(clickPower * totalMultiplier);
 }
 
-/**
- * Calculate processing power consumption per second
- * Processing power is consumed by token generation upgrades
- * @param {Object} upgradeLevels - Map of upgrade IDs to levels
- * @returns {number} Processing power consumed per second
- */
-export function calculateProcessingPowerConsumption(upgradeLevels) {
-  let consumption = 0;
-  
-  // Token generation upgrades consume processing power
-  for (const upgrade of UPGRADES.tokens) {
-    const level = upgradeLevels[upgrade.id] || 0;
-    if (level === 0) continue;
-    
-    // Each token upgrade consumes a small amount of processing power
-    // Based on the upgrade's processing power cost
-    if (upgrade.baseCost.processingPower) {
-      const baseConsumption = (upgrade.baseCost.processingPower || 0) * 0.01; // 1% of base cost per second
-      consumption += baseConsumption * level;
-    }
-  }
-  
-  return consumption;
-}
 
-/**
- * Calculate electricity consumption per second
- * @param {Object} upgradeLevels - Map of upgrade IDs to levels
- * @param {Object} toggledUpgrades - Map of upgrade IDs to their toggle state (true/false)
- * @returns {number} Electricity consumed per second
- */
-export function calculateElectricityConsumption(upgradeLevels, toggledUpgrades = {}) {
-  let consumption = 0;
-  
-  // Base consumption from processing upgrades (only if they require electricity)
-  for (const upgrade of UPGRADES.processingPower) {
-    const level = upgradeLevels[upgrade.id] || 0;
-    if (level === 0) continue;
-    
-    // Skip overclocking - it's handled separately
-    if (upgrade.id === 'overclocking') continue;
-    
-    // Only processing upgrades that cost electricity consume it
-    if (upgrade.baseCost.electricity) {
-      // Each processing upgrade consumes a small amount based on its cost
-      const baseConsumption = (upgrade.baseCost.electricity || 0) * 0.03; // 3% of base cost per second
-      consumption += baseConsumption * level;
-    }
-  }
-  
-  // Overclocking increases consumption of other processing upgrades (only if toggled on)
-  const overclockLevel = upgradeLevels['overclocking'] || 0;
-  if (overclockLevel > 0) {
-    const isOverclockToggled = toggledUpgrades['overclocking'] !== false; // Default to true
-    if (isOverclockToggled) {
-      const overclockUpgrade = UPGRADES.processingPower.find(u => u.id === 'overclocking');
-      if (overclockUpgrade && overclockUpgrade.effect.electricityCostMultiplier) {
-        consumption *= Math.pow(overclockUpgrade.effect.electricityCostMultiplier, overclockLevel);
-      }
-    }
-  }
-  
-  // Energy efficiency reduces consumption
-  const efficiencyLevel = upgradeLevels['energy-efficiency'] || 0;
-  if (efficiencyLevel > 0) {
-    const reduction = Math.pow(0.9, efficiencyLevel); // 10% reduction per level
-    consumption *= reduction;
-  }
-  
-  return consumption;
-}
 
 /**
  * Calculate stage progress percentage

@@ -1,13 +1,33 @@
 import { useState, useRef } from 'react';
 import { ResourceDisplay } from './ResourceDisplay.jsx';
 import { ParticleEffect } from './ParticleEffect.jsx';
-import { calculateClickPower, calculateGeneration, calculateElectricityConsumption, calculateProcessingPowerConsumption, calculateNSFWDrain } from '../utils/calculations.js';
+import { calculateClickPower, calculateGeneration, calculateNSFWDrain } from '../utils/calculations.js';
 import { STAGES, STAGE_REQUIREMENTS, UPGRADES, VERSION_MULTIPLIERS } from '../utils/constants.js';
 import { formatNumber, formatBitcoin, formatStorage, formatElectricity } from '../utils/formatters.js';
 
-export function OverviewBar({ gameState, gameActions, onResourceClick }) {
+export function OverviewBar({ gameState, gameActions, onResourceClick, resourceRefs }) {
   const [particleEffects, setParticleEffects] = useState([]);
   const particleIdRef = useRef(0);
+  
+  // Create refs for resource displays if not provided
+  const tokensRef = useRef(null);
+  const satoshisRef = useRef(null);
+  const processingPowerRef = useRef(null);
+  const electricityRef = useRef(null);
+  const storageRef = useRef(null);
+  const addictivityRef = useRef(null);
+  
+  // Expose refs to parent if provided
+  if (resourceRefs) {
+    resourceRefs.current = {
+      tokens: tokensRef,
+      satoshis: satoshisRef,
+      processingPower: processingPowerRef,
+      electricity: electricityRef,
+      storage: storageRef,
+      addictivity: addictivityRef,
+    };
+  }
   
   const clickPower = calculateClickPower(
     gameState.state.upgradeLevels,
@@ -54,18 +74,9 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
   const nsfwDrainWithMultipliers = nsfwDrain.tokenDrainPerSec * productionMultiplier;
   const netTokenRate = tokenGenerationWithMultipliers - tokenConsumptionFlat - nsfwDrainWithMultipliers;
   
-  // Calculate consumption
-  const electricityConsumption = calculateElectricityConsumption(
-    gameState.state.upgradeLevels,
-    gameState.state.toggledUpgrades || {}
-  );
-  const processingPowerConsumption = calculateProcessingPowerConsumption(
-    gameState.state.upgradeLevels
-  );
-  
-  // Calculate excess values (generation - consumption)
-  const excessProcessingPower = Math.max(0, generation.processingPower - processingPowerConsumption);
-  const excessElectricity = Math.max(0, generation.electricity - electricityConsumption);
+  // Calculate Bitcoin rate including NSFW conversion
+  const nsfwSatsWithMultipliers = nsfwDrain.satsPerSec * productionMultiplier;
+  const totalBitcoinRate = (generation.satoshis || 0) + nsfwSatsWithMultipliers;
   
   const currentStage = STAGES[gameState.state.stage];
   const nextStage = STAGES[gameState.state.stage + 1];
@@ -141,41 +152,47 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
       {/* Compact Resources Row - Horizontal Cards */}
       <div className="resources-row">
         <ResourceDisplay
+          ref={tokensRef}
           label="Tokens"
           value={gameState.state.tokens}
           perSecond={netTokenRate}
           icon="🪙"
           color="neon-cyan"
           onClick={() => onResourceClick && onResourceClick('tokens')}
+          resourceType="tokens"
         />
         <ResourceDisplay
+          ref={processingPowerRef}
           label="Processing"
-          value={excessProcessingPower}
-          perSecond={excessProcessingPower}
+          value={gameState.state.processingPower}
           icon="💻"
           color="neon-purple"
           onClick={() => onResourceClick && onResourceClick('processingPower')}
           isProcessing={true}
+          resourceType="processingPower"
         />
         <ResourceDisplay
+          ref={electricityRef}
           label="Electricity"
-          value={excessElectricity}
-          perSecond={excessElectricity}
+          value={gameState.state.electricity}
           icon="⚡"
           color="neon-green"
           onClick={() => onResourceClick && onResourceClick('electricity')}
-          showRateOnly={true}
           isElectricity={true}
+          resourceType="electricity"
         />
         <ResourceDisplay
+          ref={storageRef}
           label="Storage"
           value={gameState.state.storage}
           icon="💾"
           color="neon-cyan"
           onClick={() => onResourceClick && onResourceClick('storage')}
           isStorage={true}
+          resourceType="storage"
         />
         <ResourceDisplay
+          ref={addictivityRef}
           label="Addictivity"
           value={gameState.state.addictivity}
           perSecond={generation.addictivity}
@@ -183,14 +200,17 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
           color="neon-purple"
           onClick={() => onResourceClick && onResourceClick('addictivity')}
           isAddictivity={true}
+          resourceType="addictivity"
         />
         <ResourceDisplay
+          ref={satoshisRef}
           label="Bitcoin"
           value={gameState.state.satoshis}
-          perSecond={generation.satoshis}
+          perSecond={totalBitcoinRate}
           icon="₿"
           color="neon-green"
           isBitcoin={true}
+          resourceType="satoshis"
         />
       </div>
       
@@ -255,9 +275,9 @@ export function OverviewBar({ gameState, gameActions, onResourceClick }) {
                     currentFormatted = formatStorage(current);
                     requiredFormatted = formatStorage(required);
                   } else if (resource === 'processingPower') {
-                    // For processing, show number with unit at end: "0/5 FLOPS/s"
+                    // For processing, show number with unit at end: "0/5 FLOPS"
                     currentFormatted = formatNumber(current, 0);
-                    requiredFormatted = formatNumber(required, 0) + ' FLOPS/s';
+                    requiredFormatted = formatNumber(required, 0) + ' FLOPS';
                   } else if (resource === 'electricity') {
                     // For electricity, use formatElectricity
                     currentFormatted = formatElectricity(current);

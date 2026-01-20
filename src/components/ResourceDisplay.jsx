@@ -1,9 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import { formatNumber, formatBitcoin, formatStorage, formatElectricity } from '../utils/formatters.js';
 
-export function ResourceDisplay({ label, value, perSecond, icon, color = 'neon-cyan', onClick, isBitcoin = false, isStorage = false, isElectricity = false, isProcessing = false, isAddictivity = false, showRateOnly = false, rateUnit = '/s' }) {
+export const ResourceDisplay = forwardRef(({ label, value, perSecond, icon, color = 'neon-cyan', onClick, isBitcoin = false, isStorage = false, isElectricity = false, isProcessing = false, isAddictivity = false, showRateOnly = false, rateUnit = '/s', resourceType }, ref) => {
   const [displayValue, setDisplayValue] = useState(value);
   const [isAnimating, setIsAnimating] = useState(false);
+  const cardRef = useRef(null);
+  
+  useImperativeHandle(ref, () => ({
+    getPosition: () => {
+      if (cardRef.current) {
+        const rect = cardRef.current.getBoundingClientRect();
+        return {
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2,
+        };
+      }
+      return null;
+    },
+    resourceType,
+  }));
   
   useEffect(() => {
     if (value !== displayValue) {
@@ -26,6 +41,7 @@ export function ResourceDisplay({ label, value, perSecond, icon, color = 'neon-c
   
   return (
     <div 
+      ref={cardRef}
       className={`resource-card ${isAnimating ? 'resource-card-updating' : ''} ${onClick ? 'resource-card-clickable' : ''}`} 
       data-color={color}
       onClick={onClick}
@@ -38,9 +54,9 @@ export function ResourceDisplay({ label, value, perSecond, icon, color = 'neon-c
             {isElectricity ? formatElectricity(perSecond !== undefined ? perSecond : displayValue) : formatNumber(perSecond !== undefined ? perSecond : displayValue) + rateUnit}
           </div>
         ) : isProcessing ? (
-          // Processing shows value with FLOPS/sec unit
+          // Processing shows value with FLOPS unit
           <div className={`resource-value ${colors.text}`}>
-            {formatNumber(displayValue)} FLOPS/sec
+            {formatNumber(displayValue)} FLOPS
           </div>
         ) : isAddictivity ? (
           // Addictivity shows per-second rate with SATS/sec unit
@@ -62,4 +78,4 @@ export function ResourceDisplay({ label, value, perSecond, icon, color = 'neon-c
       </div>
     </div>
   );
-}
+});
